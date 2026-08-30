@@ -41,7 +41,12 @@ jobs:
 
       - name: Build wheel (Linux manylinux)
         if: matrix.manylinux != ''
-        run: maturin build --release --out dist --target ${{ matrix.target }} --manylinux ${{ matrix.manylinux }} -b bin
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: 2_28
+          command: build
+          args: --release --out dist -b bin
 
       - name: Build wheel
         if: matrix.manylinux == ''
