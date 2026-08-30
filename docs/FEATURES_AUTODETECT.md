@@ -3,9 +3,10 @@
 Auto-detect pages, **API workflow scenarios**, and common paths from a site. Same interactive TUI — select scenarios and run.
 
 ```powershell
-cargo run -- features https://api.confuciusai.io
-cargo run -- features https://api.confuciusai.io --no-llm   # skip LLM refine
-cargo run -- features https://api.confuciusai.io --manifest .trace-diff/workflows-api-confuciusai-io.json
+trace-diff features https://api.confuciusai.io
+trace-diff features https://api.confuciusai.io --no-llm   # skip workflow pipeline
+trace-diff features --check-llm                         # verify LLM provider setup
+trace-diff features https://api.confuciusai.io --manifest .trace-diff/workflows-api-confuciusai-io.json
 ```
 
 ## Hybrid flow detection (rules + optional LLM)
@@ -25,7 +26,7 @@ Discovery uses a **robust pipeline** — not naive string matching:
 7. Inserts a **TLS certificate canary** for HTTPS hosts (handshake + days until expiry).
 8. TUI shows **FLOW** / **WRITE** / **TLS** rows with step detail panel on highlight.
 
-No chat UI. LLM runs silently during discovery.
+No chat UI. When LLM is unavailable, the TUI status line shows **heuristics only** and stderr prints a setup hint. See [LLM_SETUP.md](LLM_SETUP.md).
 
 ## Multi-role auth (user / annotator / admin)
 
@@ -64,15 +65,15 @@ $env:TRACE_DIFF_PASSWORD = "..."
 $env:TRACE_DIFF_ANNOTATOR_EMAIL = "annotator@example.com"
 $env:TRACE_DIFF_ANNOTATOR_PASSWORD = "..."
 $env:TRACE_DIFF_ADMIN_SECRET = "your-admin-secret"
-cargo run -- features https://api.confuciusai.io
+trace-diff features https://api.confuciusai.io
 ```
 
 CLI flags override env for the **user** realm:
 
 ```powershell
-cargo run -- features https://api.confuciusai.io --email user@example.com --password "..."
-cargo run -- features https://api.confuciusai.io --auth-file auth.json
-cargo run -- features https://api.confuciusai.io --bearer-token $env:TOKEN
+trace-diff features https://api.confuciusai.io --email user@example.com --password "..."
+trace-diff features https://api.confuciusai.io --auth-file auth.json
+trace-diff features https://api.confuciusai.io --bearer-token $env:TOKEN
 ```
 
 Multi-profile `auth.json`:
@@ -119,7 +120,7 @@ Headless run fails the process on **Failed** rows. Optional gates:
 | `--json` | Print the full report |
 
 ```powershell
-cargo run -- features https://api.confuciusai.io -y --manifest .trace-diff/workflows-api-confuciusai-io.json --auth-file auth.json --fail-if-ttfb-exceeds 250ms
+trace-diff features https://api.confuciusai.io -y --manifest .trace-diff/workflows-api-confuciusai-io.json --auth-file auth.json --fail-if-ttfb-exceeds 250ms
 ```
 
 Exit non-zero if any row is **Failed**, or if TTFB exceeds the limit.
@@ -128,18 +129,31 @@ Exit non-zero if any row is **Failed**, or if TTFB exceeds the limit.
 
 HTTPS discovery adds a **TLS certificate** row: handshake, protocol version, and days until expiry. Expired certs are **Failed**. Expiry inside `--cert-warn-days` is **Reachable** (yellow). Healthy otherwise.
 
-## LLM setup
+## LLM setup (optional)
+
+Heuristic workflows work without any LLM. For optional refine, **Groq is recommended** for pip users (API key only — no local install). Full guide: [LLM_SETUP.md](LLM_SETUP.md).
 
 ```powershell
-ollama pull qwen2.5:7b-instruct   # or use llama3.2 if already installed
+$env:GROQ_API_KEY = "gsk_..."   # free at https://console.groq.com
+trace-diff features --check-llm
+trace-diff features https://api.confuciusai.io
+```
+
+Local alternative:
+
+```powershell
+ollama pull qwen2.5:7b-instruct
+trace-diff features https://api.confuciusai.io
 ```
 
 | Flag / env | Default | Purpose |
 |------------|---------|---------|
-| `--no-llm` | off | Skip LLM refine (heuristics only) |
-| `TRACE_DIFF_AI_PROVIDER` | `ollama` | `ollama` or `groq` |
+| `--check-llm` | off | Print provider status and exit |
+| `--no-llm` | off | Skip workflow pipeline (flat endpoint list) |
+| `TRACE_DIFF_AI_PROVIDER` | `auto` | `auto`, `groq`, or `ollama` (`auto` prefers Groq key, then Ollama) |
+| `GROQ_API_KEY` | — | Groq API key (recommended) |
 | `OLLAMA_HOST` | `http://localhost:11434` | Local Ollama |
-| `GROQ_API_KEY` | — | Cloud fallback |
+| `TRACE_DIFF_AI_MODEL` | provider default | Override model id |
 
 ## Cache invalidation
 

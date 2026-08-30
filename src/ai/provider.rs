@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AiProvider {
+    Auto,
     Ollama,
     Groq,
 }
@@ -12,18 +13,43 @@ pub enum AiProvider {
 impl AiProvider {
     pub fn parse(s: &str) -> Result<Self> {
         match s.to_ascii_lowercase().as_str() {
+            "auto" => Ok(Self::Auto),
             "ollama" | "local" => Ok(Self::Ollama),
             "groq" => Ok(Self::Groq),
             other => Err(Error::Other(format!(
-                "unknown AI provider '{other}' (use ollama or groq)"
+                "unknown AI provider '{other}' (use auto, ollama, or groq)"
             ))),
         }
     }
 
     pub fn default_model(self) -> &'static str {
         match self {
+            Self::Auto | Self::Groq => "llama-3.1-8b-instant",
             Self::Ollama => "qwen2.5:7b-instruct",
-            Self::Groq => "llama-3.1-8b-instant",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Ollama => "ollama",
+            Self::Groq => "groq",
+        }
+    }
+}
+
+/// Concrete provider chosen after `auto` resolution (or explicit selection).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResolvedProvider {
+    Groq,
+    Ollama,
+}
+
+impl ResolvedProvider {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Groq => "groq",
+            Self::Ollama => "ollama",
         }
     }
 }
@@ -31,6 +57,7 @@ impl AiProvider {
 #[derive(Debug, Clone)]
 pub struct AiConfig {
     pub provider: AiProvider,
+    pub resolved: ResolvedProvider,
     pub model: String,
     pub ollama_host: String,
     pub groq_api_key: Option<String>,
@@ -41,6 +68,33 @@ impl AiConfig {
     pub fn resolve_model(&self) -> &str {
         &self.model
     }
+
+    pub fn active_label(&self) -> &str {
+        self.resolved.label()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AiResolution {
+    pub requested: AiProvider,
+    pub config: Option<AiConfig>,
+    pub groq_key_set: bool,
+    pub ollama_reachable: bool,
+    pub ollama_host: String,
+}
+
+impl AiResolution {
+    pub fn resolved_label(&self) -> &str {
+        match &self.config {
+            Some(c) => c.active_label(),
+            None if self.requested == AiProvider::Auto => "none",
+            None => self.requested.label(),
+        }
+    }
+
+    pub fn is_ready(&self) -> bool {
+        self.config.is_some()
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -49,33 +103,131 @@ pub struct ChatMessage {
     pub content: String,
 }
 
-pub async fn llm_available(cfg: &AiConfig) -> bool {
-    match cfg.provider {
-        AiProvider::Ollama => {
-            let url = format!("{}/api/tags", cfg.ollama_host.trim_end_matches('/'));
-            let client = match http_client(3) {
-                Ok(c) => c,
-                Err(_) => return false,
-            };
-            client
-                .get(&url)
-                .send()
-                .await
-                .map(|r| r.status().is_success())
-                .unwrap_or(false)
+pub async fn ollama_reachable(host: &str) -> bool {
+    let url = format!("{}/api/tags", host.trim_end_matches('/'));
+    let client = match http_client(3) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    client
+        .get(&url)
+        .send()
+        .await
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
+}
+
+pub fn groq_key_set(key: Option<&str>) -> bool {
+    key.map(|k| !k.trim().is_empty()).unwrap_or(false)
+}
+
+/// Resolve CLI/env AI settings into an optional ready-to-use config.
+pub async fn resolve_ai_config(
+    provider_str: &str,
+    model: Option<String>,
+    ollama_host: String,
+    groq_api_key: Option<String>,
+    timeout_secs: u64,
+) -> Result<AiResolution> {
+    let requested = AiProvider::parse(provider_str)?;
+    let groq_ok = groq_key_set(groq_api_key.as_deref());
+    let ollama_ok = ollama_reachable(&ollama_host).await;
+
+    let resolved = match requested {
+        AiProvider::Auto => {
+            if groq_ok {
+                Some(ResolvedProvider::Groq)
+            } else if ollama_ok {
+                Some(ResolvedProvider::Ollama)
+            } else {
+                None
+            }
         }
-        AiProvider::Groq => cfg
-            .groq_api_key
-            .as_deref()
-            .map(|k| !k.is_empty())
-            .unwrap_or(false),
+        AiProvider::Groq if groq_ok => Some(ResolvedProvider::Groq),
+        AiProvider::Ollama if ollama_ok => Some(ResolvedProvider::Ollama),
+        AiProvider::Groq | AiProvider::Ollama => None,
+    };
+
+    let config = if let Some(r) = resolved {
+        let default_model = match r {
+            ResolvedProvider::Groq => AiProvider::Groq.default_model(),
+            ResolvedProvider::Ollama => AiProvider::Ollama.default_model(),
+        };
+        let mut cfg = AiConfig {
+            provider: requested,
+            resolved: r,
+            model: model.unwrap_or_else(|| default_model.to_string()),
+            ollama_host: ollama_host.clone(),
+            groq_api_key: groq_api_key.clone(),
+            timeout_secs,
+        };
+        if cfg.resolved == ResolvedProvider::Ollama {
+            cfg.model = resolve_ollama_model(&cfg).await.unwrap_or(cfg.model);
+        }
+        Some(cfg)
+    } else {
+        None
+    };
+
+    Ok(AiResolution {
+        requested,
+        config,
+        groq_key_set: groq_ok,
+        ollama_reachable: ollama_ok,
+        ollama_host,
+    })
+}
+
+pub fn print_llm_check(resolution: &AiResolution) {
+    if resolution.requested == AiProvider::Auto {
+        println!("  auto resolved: {}", resolution.resolved_label());
+    } else {
+        println!("  provider: {}", resolution.requested.label());
+    }
+
+    if let Some(cfg) = &resolution.config {
+        println!("  model: {}", cfg.resolve_model());
+        println!("  status: ready ({})", cfg.active_label());
+    } else {
+        if resolution.requested == AiProvider::Auto || resolution.requested == AiProvider::Ollama {
+            if resolution.ollama_reachable {
+                println!("  ollama: reachable at {}", resolution.ollama_host);
+            } else {
+                println!("  ollama: unreachable at {}", resolution.ollama_host);
+            }
+        }
+        if resolution.requested == AiProvider::Auto || resolution.requested == AiProvider::Groq {
+            if resolution.groq_key_set {
+                println!("  groq: GROQ_API_KEY set");
+            } else {
+                println!("  groq: GROQ_API_KEY not set");
+            }
+        }
+        println!("  status: heuristics only — see docs/LLM_SETUP.md");
+    }
+}
+
+pub fn llm_unavailable_hint(resolution: &AiResolution) -> Option<String> {
+    if resolution.is_ready() {
+        return None;
+    }
+    Some(
+        "Optional LLM: set GROQ_API_KEY (https://console.groq.com) or run Ollama — see docs/LLM_SETUP.md"
+            .into(),
+    )
+}
+
+pub async fn llm_available(cfg: &AiConfig) -> bool {
+    match cfg.resolved {
+        ResolvedProvider::Ollama => ollama_reachable(&cfg.ollama_host).await,
+        ResolvedProvider::Groq => groq_key_set(cfg.groq_api_key.as_deref()),
     }
 }
 
 pub async fn complete_chat(cfg: &AiConfig, messages: &[ChatMessage]) -> Result<String> {
-    match cfg.provider {
-        AiProvider::Ollama => ollama_chat(cfg, cfg.resolve_model(), messages).await,
-        AiProvider::Groq => groq_chat(cfg, messages).await,
+    match cfg.resolved {
+        ResolvedProvider::Ollama => ollama_chat(cfg, cfg.resolve_model(), messages).await,
+        ResolvedProvider::Groq => groq_chat(cfg, messages).await,
     }
 }
 
@@ -279,4 +431,25 @@ struct OpenAiChoice {
 #[derive(Debug, Deserialize)]
 struct OpenAiMessage {
     content: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_auto_provider() {
+        assert_eq!(AiProvider::parse("auto").unwrap(), AiProvider::Auto);
+        assert_eq!(AiProvider::parse("AUTO").unwrap(), AiProvider::Auto);
+        assert_eq!(AiProvider::parse("groq").unwrap(), AiProvider::Groq);
+        assert!(AiProvider::parse("unknown").is_err());
+    }
+
+    #[test]
+    fn groq_key_set_detects_empty() {
+        assert!(!groq_key_set(None));
+        assert!(!groq_key_set(Some("")));
+        assert!(!groq_key_set(Some("   ")));
+        assert!(groq_key_set(Some("gsk_test")));
+    }
 }

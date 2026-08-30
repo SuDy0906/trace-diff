@@ -18,6 +18,8 @@ trace-diff features https://api.example.com
 Package on PyPI: **`trace-route-test`** → CLI: **`trace-diff`**.  
 Install guide: [docs/INSTALL.md](docs/INSTALL.md) · [PyPI details](docs/PYPI.md)
 
+**Optional LLM for smarter API workflows:** `trace-diff features` works with built-in heuristics. For richer OpenAPI workflow grouping, set `GROQ_API_KEY` (free at [console.groq.com](https://console.groq.com)) or run Ollama locally. Check setup with `trace-diff features --check-llm`. See [docs/LLM_SETUP.md](docs/LLM_SETUP.md).
+
 ### From source (developers)
 
 ```bash
@@ -54,6 +56,7 @@ cargo run -- -v run https://example.com --skip-trace --output text
 ## Docs
 
 - [**Feature auto-detect**](docs/FEATURES_AUTODETECT.md) — discover pages/APIs, prompt, scorecard
+- [**LLM setup (optional)**](docs/LLM_SETUP.md) — Groq or Ollama for smarter workflows
 - [**Feature reference**](docs/FEATURES.md) — full catalog of commands, probes, TUI, baselines, CI
 - [Problem & technical proposal](docs/PROBLEM_AND_TECHNICAL_PROPOSAL.md)
 - [Install (Windows / macOS / Linux)](docs/INSTALL.md)

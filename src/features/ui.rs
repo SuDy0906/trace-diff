@@ -5,8 +5,9 @@ use super::workflow::{detect_auth_realms, workflow_realm};
 use super::{
     build_categorized_report, discover_features, has_step_warnings, is_write_flow, AuthRealmHint,
     DetectedFeature, DiscoverOptions, FeatureKind, FeatureResult, FeatureRunReport, FlowKind,
-    IssueCategory, ProbeSettings, ProbeVerdict, WorkflowScenario,
+    IssueCategory, LlmDiscoveryStatus, ProbeSettings, ProbeVerdict, WorkflowScenario,
 };
+use crate::ai::llm_unavailable_hint;
 use crate::error::{Error, Result};
 use crate::theme::Theme;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -105,6 +106,14 @@ pub async fn run_features_interactive(
     settings: ProbeSettings,
     discover: DiscoverOptions<'_>,
 ) -> Result<()> {
+    if discover.infer_workflows {
+        if let Some(res) = discover.ai_resolution.as_ref() {
+            if let Some(hint) = llm_unavailable_hint(res) {
+                eprintln!("{hint}");
+            }
+        }
+    }
+
     let mut terminal = setup()?;
     let mut app = App {
         base: base.to_string(),
@@ -138,7 +147,8 @@ pub async fn run_features_interactive(
     draw(&mut terminal, &mut app)?;
 
     match discover_features(base, discover).await {
-        Ok(feats) => {
+        Ok(outcome) => {
+            let feats = outcome.features;
             let n = feats.len();
             let workflows = feats
                 .iter()
@@ -148,13 +158,7 @@ pub async fn run_features_interactive(
             app.features = feats;
             maybe_auto_open_auth_popup(&mut app);
             app.phase = Phase::Select;
-            app.status = if workflows > 0 {
-                format!("Found {workflows} workflows + {n} total · ↑↓ · Space · Enter run · q quit")
-            } else {
-                format!(
-                    "Found {n} candidates · ↑↓ move · Space toggle · a all · n none · Enter run · q quit"
-                )
-            };
+            app.status = discovery_status_line(workflows, n, &outcome.llm);
         }
         Err(e) => {
             app.error = Some(e.to_string());
@@ -2090,6 +2094,20 @@ fn compact_result_detail(r: &FeatureResult) -> String {
         format!("{} · alert", r.message)
     } else {
         r.message.clone()
+    }
+}
+
+fn discovery_status_line(workflows: usize, total: usize, llm: &LlmDiscoveryStatus) -> String {
+    let base = if workflows > 0 {
+        format!("Found {workflows} workflows + {total} total · ↑↓ · Space · Enter run · q quit")
+    } else {
+        format!(
+            "Found {total} candidates · ↑↓ move · Space toggle · a all · n none · Enter run · q quit"
+        )
+    };
+    match llm.status_suffix() {
+        Some(suffix) => format!("{base} · {suffix}"),
+        None => base,
     }
 }
 

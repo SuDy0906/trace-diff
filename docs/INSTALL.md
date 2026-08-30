@@ -33,6 +33,18 @@ trace-diff features https://api.example.com
 
 Set auth via env vars or `--auth-file` (see [FEATURES_AUTODETECT.md](FEATURES_AUTODETECT.md)).
 
+### Optional: smarter workflows (LLM)
+
+Heuristic workflows work without any setup. To enable optional LLM refine (Groq recommended — API key only):
+
+```bash
+export GROQ_API_KEY="gsk_..."   # free at https://console.groq.com
+trace-diff features --check-llm
+trace-diff features https://api.example.com
+```
+
+Full guide: [LLM_SETUP.md](LLM_SETUP.md).
+
 ---
 
 ## Platform notes (pip install)

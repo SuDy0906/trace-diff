@@ -3,7 +3,7 @@
 use super::openapi_index::OpenApiIndex;
 use super::workflow::{self, validate_and_filter_workflows, workflow_to_feature, MANIFEST_VERSION};
 use super::{DetectedFeature, FeatureKind};
-use crate::ai::{self, AiConfig};
+use crate::ai::{self, AiConfig, AiResolution};
 use crate::error::{Error, Result};
 use reqwest::Client;
 use serde::Deserialize;
@@ -18,10 +18,49 @@ use url::Url;
 pub struct DiscoverOptions<'a> {
     pub manifest: Option<&'a Path>,
     pub llm: Option<AiConfig>,
+    pub ai_resolution: Option<AiResolution>,
     /// When true, prefer LLM workflow scenarios over flat OpenAPI endpoint lists.
     pub infer_workflows: bool,
     /// Skip inserting the TLS certificate canary row.
     pub skip_tls_canary: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LlmDiscoveryStatus {
+    Disabled,
+    Unavailable { hint: String },
+    Cached,
+    HeuristicsOnly,
+    Refined { provider: String },
+    Generated { provider: String },
+}
+
+impl LlmDiscoveryStatus {
+    pub fn status_suffix(&self) -> Option<String> {
+        match self {
+            Self::Disabled => None,
+            Self::Unavailable { .. } => {
+                Some("heuristics only — set GROQ_API_KEY for smarter flows".into())
+            }
+            Self::Cached => Some("workflows from cache".into()),
+            Self::HeuristicsOnly => Some("heuristics only".into()),
+            Self::Refined { provider } => Some(format!("LLM refined ({provider})")),
+            Self::Generated { provider } => Some(format!("LLM generated ({provider})")),
+        }
+    }
+
+    pub fn stderr_hint(&self) -> Option<&str> {
+        match self {
+            Self::Unavailable { hint } => Some(hint.as_str()),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DiscoverOutcome {
+    pub features: Vec<DetectedFeature>,
+    pub llm: LlmDiscoveryStatus,
 }
 
 const COMMON_PATHS: &[(&str, &str, FeatureKind)] = &[
@@ -75,10 +114,8 @@ const OPENAPI_PATHS: &[&str] = &[
 ];
 
 /// Auto-detect pages, workflows, and common API paths for `base`.
-pub async fn discover_features(
-    base: &str,
-    opts: DiscoverOptions<'_>,
-) -> Result<Vec<DetectedFeature>> {
+pub async fn discover_features(base: &str, opts: DiscoverOptions<'_>) -> Result<DiscoverOutcome> {
+    let mut llm_status = initial_llm_status(&opts);
     let root = normalize_base(base)?;
     let api_host = is_api_host(&root);
     let client = Client::builder()
@@ -124,6 +161,7 @@ pub async fn discover_features(
                             insert(&mut by_url, feat);
                         }
                         used_workflows = true;
+                        llm_status = LlmDiscoveryStatus::Cached;
                         debug!(path = %cache_path.display(), "loaded cached workflow manifest");
                     }
                 }
@@ -138,6 +176,7 @@ pub async fn discover_features(
                 };
 
                 if !manifest.workflows.is_empty() {
+                    let mut llm_used = false;
                     if let Some(cfg) = opts.llm.as_ref() {
                         if ai::llm_available(cfg).await {
                             let mut llm_cfg = cfg.clone();
@@ -151,6 +190,10 @@ pub async fn discover_features(
                                         validate_and_filter_workflows(refined.workflows, &index);
                                     if !validated.is_empty() {
                                         manifest.workflows = validated;
+                                        llm_used = true;
+                                        llm_status = LlmDiscoveryStatus::Refined {
+                                            provider: cfg.active_label().to_string(),
+                                        };
                                         debug!(
                                             workflows = manifest.workflows.len(),
                                             "LLM refined workflows"
@@ -162,6 +205,9 @@ pub async fn discover_features(
                                 }
                             }
                         }
+                    }
+                    if !llm_used && !matches!(llm_status, LlmDiscoveryStatus::Unavailable { .. }) {
+                        llm_status = LlmDiscoveryStatus::HeuristicsOnly;
                     }
 
                     let path = default_workflow_manifest_path(&root);
@@ -196,11 +242,16 @@ pub async fn discover_features(
                                         insert(&mut by_url, workflow_to_feature(base, w));
                                     }
                                     used_workflows = true;
+                                    llm_status = LlmDiscoveryStatus::Generated {
+                                        provider: cfg.active_label().to_string(),
+                                    };
                                     debug!(workflows = manifest.workflows.len(), "LLM workflows");
                                 }
                             }
                             Err(e) => debug!(error = %e, "LLM workflow inference unavailable"),
                         }
+                    } else if !matches!(llm_status, LlmDiscoveryStatus::Unavailable { .. }) {
+                        llm_status = LlmDiscoveryStatus::HeuristicsOnly;
                     }
                 }
             }
@@ -401,7 +452,28 @@ pub async fn discover_features(
                 .then_with(|| a.label.cmp(&b.label))
         });
     }
-    Ok(list)
+    Ok(DiscoverOutcome {
+        features: list,
+        llm: llm_status,
+    })
+}
+
+fn initial_llm_status(opts: &DiscoverOptions<'_>) -> LlmDiscoveryStatus {
+    if !opts.infer_workflows {
+        return LlmDiscoveryStatus::Disabled;
+    }
+    if opts.llm.is_some() {
+        return LlmDiscoveryStatus::HeuristicsOnly;
+    }
+    let hint = opts
+        .ai_resolution
+        .as_ref()
+        .and_then(ai::llm_unavailable_hint)
+        .unwrap_or_else(|| {
+            "set GROQ_API_KEY (https://console.groq.com) or run Ollama — see docs/LLM_SETUP.md"
+                .into()
+        });
+    LlmDiscoveryStatus::Unavailable { hint }
 }
 
 fn is_api_host(root: &Url) -> bool {

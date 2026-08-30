@@ -58,8 +58,8 @@ pub enum Commands {
 
 #[derive(Debug, Clone, Parser)]
 pub struct FeaturesArgs {
-    /// Site root URL or hostname (e.g. https://confuciusai.io)
-    pub target: String,
+    /// Site root URL or hostname (e.g. https://confuciusai.io). Omit with --check-llm.
+    pub target: Option<String>,
 
     /// Skip interactive UI: test discovered page/API features automatically
     #[arg(long, short = 'y')]
@@ -121,8 +121,12 @@ pub struct FeaturesArgs {
     #[arg(long)]
     pub no_llm: bool,
 
-    /// LLM provider for background workflow inference: ollama or groq
-    #[arg(long, env = "TRACE_DIFF_AI_PROVIDER", default_value = "ollama")]
+    /// Print LLM provider status and exit (for pip setup verification)
+    #[arg(long)]
+    pub check_llm: bool,
+
+    /// LLM provider for background workflow inference: auto, groq, or ollama
+    #[arg(long, env = "TRACE_DIFF_AI_PROVIDER", default_value = "auto")]
     pub llm_provider: String,
 
     #[arg(long, env = "TRACE_DIFF_AI_MODEL")]

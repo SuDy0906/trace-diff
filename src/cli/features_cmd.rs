@@ -1,6 +1,6 @@
 //! `trace-diff features` — auto-detect site features and run interactive checks.
 
-use crate::ai::{llm_available, resolve_ollama_model, AiConfig, AiProvider};
+use crate::ai::{print_llm_check, resolve_ai_config, AiResolution};
 use crate::cli::run::UiOpts;
 use crate::cli::FeaturesArgs;
 use crate::error::Result;
@@ -10,14 +10,27 @@ use crate::features::{
 use std::time::Duration;
 
 pub async fn execute(args: FeaturesArgs, ui: UiOpts) -> Result<()> {
+    let resolution = resolve_ai_resolution(&args).await?;
+
+    if args.check_llm {
+        print_llm_check(&resolution);
+        return Ok(());
+    }
+
+    let target = args
+        .target
+        .as_deref()
+        .ok_or_else(|| crate::error::Error::Other("target URL required".into()))?;
+
     let timeout = args.timeout.unwrap_or(Duration::from_secs(15));
-    let discover = build_discover_options(&args).await?;
+    let discover = build_discover_options(&args, resolution).await?;
     let settings = build_probe_settings(&args, timeout)?;
 
     if args.yes_all {
-        let feats = features::discover_features(&args.target, discover).await?;
-        let chosen = select_ci_features(&feats, &args);
-        let report = features::run_selected(&args.target, &chosen, &settings).await?;
+        let outcome = features::discover_features(target, discover).await?;
+        print_llm_hint(&outcome.llm);
+        let chosen = select_ci_features(&outcome.features, &args);
+        let report = features::run_selected(target, &chosen, &settings).await?;
         if args.json {
             println!("{}", serde_json::to_string_pretty(&report)?);
         } else {
@@ -41,7 +54,24 @@ pub async fn execute(args: FeaturesArgs, ui: UiOpts) -> Result<()> {
         return Ok(());
     }
 
-    features::run_features_interactive(&args.target, ui.theme, settings, discover).await
+    features::run_features_interactive(target, ui.theme, settings, discover).await
+}
+
+async fn resolve_ai_resolution(args: &FeaturesArgs) -> Result<AiResolution> {
+    resolve_ai_config(
+        &args.llm_provider,
+        args.llm_model.clone(),
+        args.ollama_host.clone(),
+        args.groq_api_key.clone(),
+        args.llm_timeout_secs,
+    )
+    .await
+}
+
+fn print_llm_hint(llm: &features::LlmDiscoveryStatus) {
+    if let Some(hint) = llm.stderr_hint() {
+        eprintln!("{hint}");
+    }
 }
 
 fn build_probe_settings(args: &FeaturesArgs, timeout: Duration) -> Result<ProbeSettings> {
@@ -135,25 +165,13 @@ fn ci_gate(results: &[FeatureResult], args: &FeaturesArgs) -> Result<()> {
     Ok(())
 }
 
-async fn build_discover_options(args: &FeaturesArgs) -> Result<DiscoverOptions<'_>> {
+async fn build_discover_options(
+    args: &FeaturesArgs,
+    resolution: AiResolution,
+) -> Result<DiscoverOptions<'_>> {
     let infer_workflows = !args.no_llm;
     let llm = if infer_workflows {
-        let provider = AiProvider::parse(&args.llm_provider)?;
-        let model = args
-            .llm_model
-            .clone()
-            .unwrap_or_else(|| provider.default_model().to_string());
-        let mut cfg = AiConfig {
-            provider,
-            model,
-            ollama_host: args.ollama_host.clone(),
-            groq_api_key: args.groq_api_key.clone(),
-            timeout_secs: args.llm_timeout_secs,
-        };
-        if cfg.provider == AiProvider::Ollama && llm_available(&cfg).await {
-            cfg.model = resolve_ollama_model(&cfg).await.unwrap_or(cfg.model);
-        }
-        Some(cfg)
+        resolution.config.clone()
     } else {
         None
     };
@@ -161,6 +179,11 @@ async fn build_discover_options(args: &FeaturesArgs) -> Result<DiscoverOptions<'
     Ok(DiscoverOptions {
         manifest: args.manifest.as_deref(),
         llm,
+        ai_resolution: if infer_workflows {
+            Some(resolution)
+        } else {
+            None
+        },
         infer_workflows,
         skip_tls_canary: args.no_tls_canary,
     })

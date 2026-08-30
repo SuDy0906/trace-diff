@@ -73,6 +73,10 @@ trace-diff diff staging https://example.com --output json
 trace-diff list
 ```
 
+## Optional LLM (smarter API workflows)
+
+`trace-diff features` includes heuristic OpenAPI workflow discovery — no LLM required. For optional LLM refine, set `GROQ_API_KEY` (recommended) or run Ollama locally. Verify with `trace-diff features --check-llm`. See [LLM_SETUP.md](LLM_SETUP.md).
+
 ## Build a wheel locally (maintainers)
 
 ```bash
