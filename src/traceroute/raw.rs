@@ -5,8 +5,8 @@
 //! matches replies by embedded id/seq (ICMP) or ports (UDP/TCP).
 
 use super::{HopSample, ReplyProto, TraceConfig};
-use pnet_packet::icmp::echo_request::MutableEchoRequestPacket;
 use pnet_packet::icmp::echo_reply::EchoReplyPacket;
+use pnet_packet::icmp::echo_request::MutableEchoRequestPacket;
 use pnet_packet::icmp::{checksum as icmp_checksum, IcmpPacket, IcmpTypes};
 use pnet_packet::icmpv6::{Icmpv6Packet, Icmpv6Types};
 use pnet_packet::ip::IpNextHeaderProtocols;
@@ -27,7 +27,9 @@ pub fn raw_icmp_available(dst: IpAddr) -> bool {
     {
         if matches!(dst, IpAddr::V4(_)) {
             use windows_sys::Win32::Foundation::HANDLE;
-            use windows_sys::Win32::NetworkManagement::IpHelper::{IcmpCloseHandle, IcmpCreateFile};
+            use windows_sys::Win32::NetworkManagement::IpHelper::{
+                IcmpCloseHandle, IcmpCreateFile,
+            };
             let handle: HANDLE = unsafe { IcmpCreateFile() };
             if !handle.is_null() && handle != (-1isize as HANDLE) {
                 unsafe {
@@ -130,10 +132,12 @@ fn embed_info_v4(payload: &[u8]) -> (Option<(u16, u16)>, Option<IpAddr>) {
     let dst = IpAddr::V4(ip.get_destination());
     let transport = ip.payload();
     let key = match ip.get_next_level_protocol() {
-        IpNextHeaderProtocols::Udp => UdpPacket::new(transport)
-            .map(|u| (u.get_source(), u.get_destination())),
-        IpNextHeaderProtocols::Tcp => TcpPacket::new(transport)
-            .map(|t| (t.get_source(), t.get_destination())),
+        IpNextHeaderProtocols::Udp => {
+            UdpPacket::new(transport).map(|u| (u.get_source(), u.get_destination()))
+        }
+        IpNextHeaderProtocols::Tcp => {
+            TcpPacket::new(transport).map(|t| (t.get_source(), t.get_destination()))
+        }
         IpNextHeaderProtocols::Icmp if transport.len() >= 8 => Some((
             u16::from_be_bytes([transport[4], transport[5]]),
             u16::from_be_bytes([transport[6], transport[7]]),
@@ -204,8 +208,7 @@ fn recv_matched_icmp(
         match sock.recv_from(&mut buf) {
             Ok((n, addr)) => {
                 let peer_ip = addr.as_socket().map(|s| s.ip());
-                let slice =
-                    unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, n) };
+                let slice = unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, n) };
                 let mut sighting = match dst {
                     IpAddr::V4(_) => match parse_ipv4_icmp(slice) {
                         Some(s) => s,
@@ -238,8 +241,7 @@ fn recv_matched_icmp(
                 }
             }
             Err(e)
-                if e.kind() == io::ErrorKind::WouldBlock
-                    || e.kind() == io::ErrorKind::TimedOut =>
+                if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut =>
             {
                 continue;
             }
@@ -267,16 +269,12 @@ pub async fn probe_ttl_icmp(resolved: IpAddr, ttl: u8, cfg: &TraceConfig) -> Hop
 
 /// Windows ICMP Helper API (same path as `tracert`) — raw sockets miss Time Exceeded here.
 #[cfg(windows)]
-fn probe_ttl_icmp_windows(
-    dest: Ipv4Addr,
-    ttl: u8,
-    cfg: &TraceConfig,
-) -> HopSample {
+fn probe_ttl_icmp_windows(dest: Ipv4Addr, ttl: u8, cfg: &TraceConfig) -> HopSample {
     use std::ptr;
     use windows_sys::Win32::Foundation::HANDLE;
     use windows_sys::Win32::NetworkManagement::IpHelper::{
-        IcmpCloseHandle, IcmpCreateFile, IcmpSendEcho, ICMP_ECHO_REPLY,
-        IP_OPTION_INFORMATION, IP_SUCCESS,
+        IcmpCloseHandle, IcmpCreateFile, IcmpSendEcho, ICMP_ECHO_REPLY, IP_OPTION_INFORMATION,
+        IP_SUCCESS,
     };
 
     // IP_TTL_EXPIRED_TRANSIT
@@ -296,15 +294,14 @@ fn probe_ttl_icmp_windows(
     let timeout_ms = cfg.timeout.as_millis().min(u32::MAX as u128) as u32;
 
     for _ in 0..cfg.probes_per_hop {
-        let mut options = IP_OPTION_INFORMATION {
+        let options = IP_OPTION_INFORMATION {
             Ttl: ttl,
             Tos: 0,
             Flags: 0,
             OptionsSize: 0,
             OptionsData: ptr::null_mut(),
         };
-        let reply_size =
-            std::mem::size_of::<ICMP_ECHO_REPLY>() + payload.len() + 16;
+        let reply_size = std::mem::size_of::<ICMP_ECHO_REPLY>() + payload.len() + 16;
         let mut reply = vec![0u8; reply_size];
         let start = Instant::now();
         let n = unsafe {
@@ -313,7 +310,7 @@ fn probe_ttl_icmp_windows(
                 dest_u32,
                 payload.as_ptr() as *const _,
                 payload.len() as u16,
-                &mut options,
+                &options,
                 reply.as_mut_ptr() as *mut _,
                 reply_size as u32,
                 timeout_ms,
@@ -591,12 +588,7 @@ pub async fn tcp_ttl_appears_honored(resolved: IpAddr, cfg: &TraceConfig) -> boo
 pub async fn min_ttl_tcp_connect(resolved: IpAddr, cfg: &TraceConfig) -> Option<u8> {
     let cfg = cfg.clone();
     tokio::task::spawn_blocking(move || {
-        for ttl in 1..=cfg.max_ttl.min(32) {
-            if tcp_connect_with_ttl(resolved, ttl, &cfg) {
-                return Some(ttl);
-            }
-        }
-        None
+        (1..=cfg.max_ttl.min(32)).find(|&ttl| tcp_connect_with_ttl(resolved, ttl, &cfg))
     })
     .await
     .ok()

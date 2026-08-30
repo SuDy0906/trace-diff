@@ -28,13 +28,7 @@ pub struct Theme {
 impl Theme {
     pub fn resolve(preferred: ThemeName, no_color: bool, force_color: bool) -> Self {
         let env_no = std::env::var_os("NO_COLOR").is_some();
-        let use_color = if force_color {
-            true
-        } else if no_color || env_no {
-            false
-        } else {
-            true
-        };
+        let use_color = force_color || !(no_color || env_no);
         let mut t = Self::named(preferred);
         if !use_color {
             t = Self::mono();

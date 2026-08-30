@@ -42,10 +42,7 @@ async fn reverse_dns(resolver: &TokioAsyncResolver, ip: IpAddr) -> Option<String
     }
 }
 
-async fn cymru_asn(
-    resolver: &TokioAsyncResolver,
-    ip: IpAddr,
-) -> Option<(u32, Option<String>)> {
+async fn cymru_asn(resolver: &TokioAsyncResolver, ip: IpAddr) -> Option<(u32, Option<String>)> {
     let IpAddr::V4(v4) = ip else {
         return None;
     };

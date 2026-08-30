@@ -277,18 +277,22 @@ impl AuthRealmHint {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_ascii_lowercase().as_str() {
-            "user" => Some(Self::User),
-            "annotator" => Some(Self::Annotator),
-            "admin" => Some(Self::Admin),
-            "public" => Some(Self::Public),
-            _ => None,
-        }
-    }
-
     pub fn uses_login_capture(self) -> bool {
         matches!(self, Self::User | Self::Annotator)
+    }
+}
+
+impl std::str::FromStr for AuthRealmHint {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "user" => Ok(Self::User),
+            "annotator" => Ok(Self::Annotator),
+            "admin" => Ok(Self::Admin),
+            "public" => Ok(Self::Public),
+            _ => Err(()),
+        }
     }
 }
 
@@ -322,8 +326,6 @@ pub fn infer_realm_from_tag(tag: &str) -> AuthRealmHint {
         AuthRealmHint::Admin
     } else if t == "annotators" || t == "annotator" {
         AuthRealmHint::Annotator
-    } else if t == "auth" {
-        AuthRealmHint::User
     } else {
         AuthRealmHint::User
     }
@@ -464,11 +466,7 @@ pub fn templated_path_for_probe(path: &str) -> String {
 }
 
 pub fn build_query_string(op: &EndpointOp) -> Option<String> {
-    let required: Vec<_> = op
-        .query_params
-        .iter()
-        .filter(|p| p.required)
-        .collect();
+    let required: Vec<_> = op.query_params.iter().filter(|p| p.required).collect();
     if required.is_empty() {
         return None;
     }
@@ -517,10 +515,7 @@ fn parse_security_schemes(spec: &Value) -> HashMap<String, SecurityScheme> {
             .and_then(|t| t.as_str())
             .map(|t| match t {
                 "http" => {
-                    let scheme = detail
-                        .get("scheme")
-                        .and_then(|s| s.as_str())
-                        .unwrap_or("");
+                    let scheme = detail.get("scheme").and_then(|s| s.as_str()).unwrap_or("");
                     if scheme.eq_ignore_ascii_case("bearer") {
                         SecuritySchemeKind::BearerJwt
                     } else {
@@ -535,7 +530,10 @@ fn parse_security_schemes(spec: &Value) -> HashMap<String, SecurityScheme> {
                 _ => SecuritySchemeKind::Other,
             })
             .unwrap_or(SecuritySchemeKind::Other);
-        let param_name = detail.get("name").and_then(|n| n.as_str()).map(str::to_string);
+        let param_name = detail
+            .get("name")
+            .and_then(|n| n.as_str())
+            .map(str::to_string);
         out.insert(
             name.clone(),
             SecurityScheme {
@@ -610,8 +608,14 @@ fn param_from_value(v: &Value) -> Option<ParamSpec> {
         .get("example")
         .cloned()
         .or_else(|| schema.get("example").cloned());
-    let schema_type = schema.get("type").and_then(|t| t.as_str()).map(str::to_string);
-    let format = schema.get("format").and_then(|f| f.as_str()).map(str::to_string);
+    let schema_type = schema
+        .get("type")
+        .and_then(|t| t.as_str())
+        .map(str::to_string);
+    let format = schema
+        .get("format")
+        .and_then(|f| f.as_str())
+        .map(str::to_string);
     Some(ParamSpec {
         name,
         location,
@@ -625,7 +629,10 @@ fn param_from_value(v: &Value) -> Option<ParamSpec> {
 fn parse_request_body(detail: &Value, spec: &Value) -> Option<BodySpec> {
     let rb = detail.get("requestBody")?;
     let resolved = resolve_ref_value(rb, spec, 0);
-    let required = resolved.get("required").and_then(|r| r.as_bool()).unwrap_or(false);
+    let required = resolved
+        .get("required")
+        .and_then(|r| r.as_bool())
+        .unwrap_or(false);
     let content = resolved.get("content")?.as_object()?;
     let (content_type, media) = content
         .iter()

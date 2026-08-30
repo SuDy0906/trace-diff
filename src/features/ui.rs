@@ -1,13 +1,12 @@
 //! Interactive feature discover → select → run → graphical scorecard.
 
+use super::auth_spec::{build_realm_auth_specs, realm_spec_satisfied, RealmAuthSpec};
+use super::workflow::{detect_auth_realms, workflow_realm};
 use super::{
     build_categorized_report, discover_features, has_step_warnings, is_write_flow, AuthRealmHint,
     DetectedFeature, DiscoverOptions, FeatureKind, FeatureResult, FeatureRunReport, FlowKind,
     IssueCategory, ProbeSettings, ProbeVerdict, WorkflowScenario,
 };
-use super::auth_spec::{build_realm_auth_specs, realm_spec_satisfied, RealmAuthSpec};
-use super::workflow::{detect_auth_realms, workflow_realm};
-use std::collections::HashMap;
 use crate::error::{Error, Result};
 use crate::theme::Theme;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -21,6 +20,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Clear, Gauge, Paragraph, Row, Table, Wrap};
 use ratatui::Terminal;
+use std::collections::HashMap;
 use std::io::stdout;
 use std::time::Duration;
 
@@ -39,7 +39,7 @@ enum RowRunState {
     Queued,
     /// Currently probing.
     Running,
-    Done(FeatureResult),
+    Done(Box<FeatureResult>),
 }
 
 struct App {
@@ -140,15 +140,16 @@ pub async fn run_features_interactive(
     match discover_features(base, discover).await {
         Ok(feats) => {
             let n = feats.len();
-            let workflows = feats.iter().filter(|f| f.kind == FeatureKind::Workflow).count();
+            let workflows = feats
+                .iter()
+                .filter(|f| f.kind == FeatureKind::Workflow)
+                .count();
             app.selected = feats.iter().map(default_selected).collect();
             app.features = feats;
             maybe_auto_open_auth_popup(&mut app);
             app.phase = Phase::Select;
             app.status = if workflows > 0 {
-                format!(
-                    "Found {workflows} workflows + {n} total · ↑↓ · Space · Enter run · q quit"
-                )
+                format!("Found {workflows} workflows + {n} total · ↑↓ · Space · Enter run · q quit")
             } else {
                 format!(
                     "Found {n} candidates · ↑↓ move · Space toggle · a all · n none · Enter run · q quit"
@@ -169,14 +170,15 @@ pub async fn run_features_interactive(
                 if !key_event_active(&key, &app) {
                     continue;
                 }
-                if app.auth_popup.is_some() {
-                    if handle_auth_popup(&mut app, key.code) {
-                        continue;
-                    }
+                if app.auth_popup.is_some() && handle_auth_popup(&mut app, key.code) {
+                    continue;
                 }
                 if app.inspect_open {
                     match key.code {
-                        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('d') | KeyCode::Char('i') => {
+                        KeyCode::Esc
+                        | KeyCode::Char('q')
+                        | KeyCode::Char('d')
+                        | KeyCode::Char('i') => {
                             app.inspect_open = false;
                             app.inspect_scroll = 0;
                         }
@@ -200,7 +202,10 @@ pub async fn run_features_interactive(
                 if app.report_open {
                     let page = app.report_viewport_rows.max(4) as u16;
                     match key.code {
-                        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('r') | KeyCode::Char('R') => {
+                        KeyCode::Esc
+                        | KeyCode::Char('q')
+                        | KeyCode::Char('r')
+                        | KeyCode::Char('R') => {
                             app.report_open = false;
                             app.report_scroll = 0;
                         }
@@ -285,18 +290,15 @@ pub async fn run_features_interactive(
                                     let handle = tokio::spawn(async move {
                                         super::probe_feature_with_auth(&feature, &settings).await
                                     });
-                                    let Some(result) = wait_probe_with_ui(
-                                        &mut terminal,
-                                        &mut app,
-                                        handle,
-                                    )
-                                    .await?
+                                    let Some(result) =
+                                        wait_probe_with_ui(&mut terminal, &mut app, handle).await?
                                     else {
                                         aborted = true;
                                         break;
                                     };
 
-                                    app.run_states[*idx] = RowRunState::Done(result.clone());
+                                    app.run_states[*idx] =
+                                        RowRunState::Done(Box::new(result.clone()));
                                     results.push(result);
                                     draw(&mut terminal, &mut app)?;
                                 }
@@ -351,8 +353,7 @@ pub async fn run_features_interactive(
                                 app.report = None;
                                 app.scroll = 0;
                                 app.cursor = 0;
-                                app.status =
-                                    "↑↓ move · Space toggle · Enter run · q quit".into();
+                                app.status = "↑↓ move · Space toggle · Enter run · q quit".into();
                             }
                             KeyCode::Down | KeyCode::Char('j') => {
                                 app.cursor = (app.cursor + 1).min(last);
@@ -422,7 +423,12 @@ pub async fn run_features_interactive(
                 if items.is_empty() {
                     continue;
                 }
-                println!("  [{}] {} — {}", items.len(), category.label(), category.description());
+                println!(
+                    "  [{}] {} — {}",
+                    items.len(),
+                    category.label(),
+                    category.description()
+                );
                 for item in items.iter().take(8) {
                     let step = item
                         .step_name
@@ -611,7 +617,11 @@ fn draw(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, app: &mut Ap
                 Span::raw("  "),
                 Span::styled(app.base.as_str(), Style::default().fg(app.theme.accent)),
             ]))
-            .block(Block::default().borders(Borders::ALL).title(" Auto-detect "));
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Auto-detect "),
+            );
             frame.render_widget(title, chunks[0]);
 
             let phase_kind = match &app.phase {
@@ -622,8 +632,11 @@ fn draw(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, app: &mut Ap
             };
             match phase_kind {
                 0 => {
-                    let p = Paragraph::new(app.status.as_str())
-                        .block(Block::default().borders(Borders::ALL).title(" Discovering "));
+                    let p = Paragraph::new(app.status.as_str()).block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(" Discovering "),
+                    );
                     frame.render_widget(p, chunks[1]);
                 }
                 1 => draw_select_with_detail(frame, chunks[1], app),
@@ -697,12 +710,14 @@ fn result_mark_line(theme: &Theme, r: &FeatureResult, selected: bool) -> Line<'s
             Span::styled("✓", Style::default().fg(theme.ok).add_modifier(extra)),
             Span::styled("⚠", Style::default().fg(theme.warn).add_modifier(extra)),
         ]),
-        ProbeVerdict::Healthy => {
-            Line::from(Span::styled("✓", Style::default().fg(theme.ok).add_modifier(extra)))
-        }
-        ProbeVerdict::Reachable => {
-            Line::from(Span::styled("◐", Style::default().fg(theme.warn).add_modifier(extra)))
-        }
+        ProbeVerdict::Healthy => Line::from(Span::styled(
+            "✓",
+            Style::default().fg(theme.ok).add_modifier(extra),
+        )),
+        ProbeVerdict::Reachable => Line::from(Span::styled(
+            "◐",
+            Style::default().fg(theme.warn).add_modifier(extra),
+        )),
         ProbeVerdict::Failed => Line::from(Span::styled(
             "✗",
             Style::default().fg(theme.critical).add_modifier(extra),
@@ -767,14 +782,12 @@ fn draw_running(frame: &mut ratatui::Frame, area: Rect, app: &mut App) {
             let kind = kind_label(f);
 
             let (status, style) = match app.run_states.get(i) {
-                Some(RowRunState::Idle) | None => (
-                    "–".to_string(),
-                    Style::default().fg(app.theme.muted),
-                ),
-                Some(RowRunState::Queued) => (
-                    "○".to_string(),
-                    Style::default().fg(app.theme.muted),
-                ),
+                Some(RowRunState::Idle) | None => {
+                    ("–".to_string(), Style::default().fg(app.theme.muted))
+                }
+                Some(RowRunState::Queued) => {
+                    ("○".to_string(), Style::default().fg(app.theme.muted))
+                }
                 Some(RowRunState::Running) => (
                     format!("{spinner} …"),
                     Style::default()
@@ -784,10 +797,7 @@ fn draw_running(frame: &mut ratatui::Frame, area: Rect, app: &mut App) {
                 Some(RowRunState::Done(r)) => {
                     let mark = result_mark_char(&app.theme, r);
                     let style = result_row_style(&app.theme, r);
-                    (
-                        format!("{mark} {:.0}ms", r.total_ms),
-                        style,
-                    )
+                    (format!("{mark} {:.0}ms", r.total_ms), style)
                 }
             };
 
@@ -875,10 +885,7 @@ fn active_run_idx(app: &App) -> Option<usize> {
 
 fn draw_running_with_detail(frame: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let idx = active_run_idx(app).unwrap_or(app.cursor);
-    let workflow = app
-        .features
-        .get(idx)
-        .and_then(|f| f.workflow.clone());
+    let workflow = app.features.get(idx).and_then(|f| f.workflow.clone());
     if let Some(w) = workflow {
         let detail_h = running_detail_height(&w, &app.theme, area);
         let parts = Layout::default()
@@ -937,27 +944,20 @@ fn draw_running_feature_detail(
         ),
         _ => {}
     }
-    let p = Paragraph::new(lines)
-        .wrap(Wrap { trim: false })
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(title)
-                .title_style(
-                    Style::default()
-                        .fg(app.theme.brand)
-                        .add_modifier(Modifier::BOLD),
-                ),
-        );
+    let p = Paragraph::new(lines).wrap(Wrap { trim: false }).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .title_style(
+                Style::default()
+                    .fg(app.theme.brand)
+                    .add_modifier(Modifier::BOLD),
+            ),
+    );
     frame.render_widget(p, area);
 }
 
-fn draw_results_with_detail(
-    frame: &mut ratatui::Frame,
-    main: Rect,
-    bars: Rect,
-    app: &mut App,
-) {
+fn draw_results_with_detail(frame: &mut ratatui::Frame, main: Rect, bars: Rect, app: &mut App) {
     let workflow = app.report.as_ref().and_then(|rep| {
         rep.results
             .get(app.cursor)
@@ -1007,7 +1007,7 @@ fn wrapped_line_count(lines: &[Line], inner_width: u16) -> u16 {
         .iter()
         .map(|line| {
             let n = line.width().max(1);
-            ((n + w - 1) / w).max(1)
+            n.div_ceil(w).max(1)
         })
         .sum::<usize>() as u16
 }
@@ -1021,18 +1021,16 @@ fn draw_workflow_detail(
 ) {
     let lines = workflow_detail_lines(w, theme);
     let title = format!(" {title_kind}: {} ", w.label);
-    let p = Paragraph::new(lines)
-        .wrap(Wrap { trim: false })
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(title)
-                .title_style(
-                    Style::default()
-                        .fg(theme.brand)
-                        .add_modifier(Modifier::BOLD),
-                ),
-        );
+    let p = Paragraph::new(lines).wrap(Wrap { trim: false }).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .title_style(
+                Style::default()
+                    .fg(theme.brand)
+                    .add_modifier(Modifier::BOLD),
+            ),
+    );
     frame.render_widget(p, area);
 }
 
@@ -1070,7 +1068,10 @@ fn workflow_detail_lines(w: &WorkflowScenario, theme: &Theme) -> Vec<Line<'stati
         if step.capture_bearer.is_some() {
             spans.push(Span::raw("  "));
             spans.push(Span::styled(
-                format!("→ save {}", step.capture_bearer.as_deref().unwrap_or("token")),
+                format!(
+                    "→ save {}",
+                    step.capture_bearer.as_deref().unwrap_or("token")
+                ),
                 Style::default().fg(theme.warn),
             ));
         }
@@ -1112,7 +1113,7 @@ fn step_body_hint(body: &Option<serde_json::Value>) -> Option<String> {
 fn path_tail(path: &str) -> String {
     path.trim_matches('/')
         .split('/')
-        .last()
+        .next_back()
         .unwrap_or("")
         .to_string()
 }
@@ -1187,15 +1188,16 @@ fn draw_select(frame: &mut ratatui::Frame, area: Rect, app: &mut App) {
         Row::new(vec!["", "Type", "Feature", "Found via", "URL"])
             .style(Style::default().add_modifier(Modifier::BOLD)),
     )
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(title),
-    );
+    .block(Block::default().borders(Borders::ALL).title(title));
     frame.render_widget(table, area);
 }
 
-fn score_gauge_color(theme: &Theme, passed: usize, failed: usize, selected: usize) -> ratatui::style::Color {
+fn score_gauge_color(
+    theme: &Theme,
+    passed: usize,
+    failed: usize,
+    selected: usize,
+) -> ratatui::style::Color {
     if failed == 0 || selected == 0 {
         return theme.ok;
     }
@@ -1220,11 +1222,7 @@ fn draw_results(frame: &mut ratatui::Frame, main: Rect, bars: Rect, app: &mut Ap
         rep.passed as f64 / rep.selected as f64
     };
     let g = Gauge::default()
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Score "),
-        )
+        .block(Block::default().borders(Borders::ALL).title(" Score "))
         .gauge_style(Style::default().fg(score_gauge_color(
             &app.theme,
             rep.passed,
@@ -1258,7 +1256,11 @@ fn draw_results(frame: &mut ratatui::Frame, main: Rect, bars: Rect, app: &mut Ap
             let selected = i == app.cursor;
             let data_style = result_data_style(&app.theme, r, selected);
             let bar_len = ((r.total_ms / max_ms) * 8.0).round() as usize;
-            let bar = format!("{}{}", "█".repeat(bar_len.min(8)), "░".repeat(8usize.saturating_sub(bar_len)));
+            let bar = format!(
+                "{}{}",
+                "█".repeat(bar_len.min(8)),
+                "░".repeat(8usize.saturating_sub(bar_len))
+            );
             Row::new(vec![
                 Cell::from(result_mark_line(&app.theme, r, selected)),
                 Cell::from(r.feature.label.clone()).style(data_style),
@@ -1291,11 +1293,7 @@ fn draw_results(frame: &mut ratatui::Frame, main: Rect, bars: Rect, app: &mut Ap
         Row::new(vec!["", "Feature", "Time", "Total", "Detail"])
             .style(Style::default().add_modifier(Modifier::BOLD)),
     )
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(title),
-    );
+    .block(Block::default().borders(Borders::ALL).title(title));
     frame.render_widget(table, main);
 }
 
@@ -1358,10 +1356,7 @@ fn dim_background(frame: &mut ratatui::Frame, area: Rect, exclude: Rect, theme: 
                 continue;
             }
             let cell = &mut buf[(x, y)];
-            let style = cell
-                .style()
-                .fg(theme.muted)
-                .add_modifier(Modifier::DIM);
+            let style = cell.style().fg(theme.muted).add_modifier(Modifier::DIM);
             cell.set_style(style);
         }
     }
@@ -1409,18 +1404,16 @@ fn draw_report_overlay(frame: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let scroll = app.report_scroll.min(max_scroll);
     app.report_scroll = scroll;
 
-    let p = Paragraph::new(lines.clone())
-        .scroll((scroll, 0))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Run report · Esc/R close · ↑↓ PgUp/Dn scroll ")
-                .title_style(
-                    Style::default()
-                        .fg(app.theme.brand)
-                        .add_modifier(Modifier::BOLD),
-                ),
-        );
+    let p = Paragraph::new(lines.clone()).scroll((scroll, 0)).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" Run report · Esc/R close · ↑↓ PgUp/Dn scroll ")
+            .title_style(
+                Style::default()
+                    .fg(app.theme.brand)
+                    .add_modifier(Modifier::BOLD),
+            ),
+    );
     frame.render_widget(p, popup);
 }
 
@@ -1509,7 +1502,9 @@ fn draw_inspect_overlay(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     frame.render_widget(Clear, popup);
 
     let lines = inspect_lines(app);
-    let max_scroll = lines.len().saturating_sub(popup.height.saturating_sub(3) as usize) as u16;
+    let max_scroll = lines
+        .len()
+        .saturating_sub(popup.height.saturating_sub(3) as usize) as u16;
     let scroll = app.inspect_scroll.min(max_scroll);
     let title = inspect_title(app);
     let p = Paragraph::new(lines)
@@ -1538,7 +1533,11 @@ fn inspect_title(app: &App) -> String {
 fn inspect_lines(app: &App) -> Vec<Line<'static>> {
     let theme = &app.theme;
     if matches!(app.phase, Phase::Results) {
-        if let Some(r) = app.report.as_ref().and_then(|rep| rep.results.get(app.cursor)) {
+        if let Some(r) = app
+            .report
+            .as_ref()
+            .and_then(|rep| rep.results.get(app.cursor))
+        {
             return inspect_result_lines(r, theme);
         }
     }
@@ -1605,7 +1604,9 @@ fn inspect_result_lines(r: &FeatureResult, theme: &Theme) -> Vec<Line<'static>> 
         ),
         styled_kv(
             "HTTP",
-            &r.status.map(|s| s.to_string()).unwrap_or_else(|| "—".into()),
+            &r.status
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "—".into()),
             theme,
         ),
         styled_kv("Total", &format!("{:.0} ms", r.total_ms), theme),
@@ -1743,9 +1744,7 @@ fn open_auth_popup(app: &mut App) {
             text: spec.login_summary.clone(),
         });
         for note in &spec.notes {
-            rows.push(AuthPopupRow::Note {
-                text: note.clone(),
-            });
+            rows.push(AuthPopupRow::Note { text: note.clone() });
         }
         for field in &spec.fields {
             let existing = app.settings.auth.field_value(spec.realm, &field.key);
@@ -1862,11 +1861,7 @@ fn auth_popup_push_char(popup: &mut AuthPopupState, c: char) {
     else {
         return;
     };
-    popup
-        .values
-        .entry((realm, key))
-        .or_default()
-        .push(c);
+    popup.values.entry((realm, key)).or_default().push(c);
 }
 
 fn apply_auth_popup(app: &mut App) {
@@ -1920,9 +1915,8 @@ fn apply_auth_popup(app: &mut App) {
         }
     }
     if skipped > 0 {
-        app.status = format!(
-            "Skipped {skipped} flow(s) — missing required auth · c edit · Enter run"
-        );
+        app.status =
+            format!("Skipped {skipped} flow(s) — missing required auth · c edit · Enter run");
     } else {
         app.status = "Auth saved · ↑↓ Space · Enter run · c edit auth · q quit".into();
     }
@@ -1941,7 +1935,9 @@ fn draw_auth_popup(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         .split(rect);
 
     let mut lines: Vec<Line> = vec![
-        Line::from("Required fields marked * · Tab/↑↓ move · Space toggle realm · Enter save · Esc skip"),
+        Line::from(
+            "Required fields marked * · Tab/↑↓ move · Space toggle realm · Enter save · Esc skip",
+        ),
         Line::from(""),
     ];
 
@@ -1989,11 +1985,7 @@ fn draw_auth_popup(frame: &mut ratatui::Frame, area: Rect, app: &App) {
                     .get(&(*realm, key.clone()))
                     .cloned()
                     .unwrap_or_default();
-                let display = if *secret {
-                    "*".repeat(val.len())
-                } else {
-                    val
-                };
+                let display = if *secret { "*".repeat(val.len()) } else { val };
                 let req = if *required { "*" } else { " " };
                 lines.push(Line::styled(
                     format!("     {req} {label:<22} {display}"),
@@ -2075,15 +2067,21 @@ fn compact_result_detail(r: &FeatureResult) -> String {
         match r.verdict {
             ProbeVerdict::Healthy if warn > 0 => format!(
                 "{n} steps OK · {warn} alert(s) · HTTP {}",
-                r.status.map(|s| s.to_string()).unwrap_or_else(|| "—".into())
+                r.status
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "—".into())
             ),
             ProbeVerdict::Healthy => format!(
                 "{n} steps OK · HTTP {}",
-                r.status.map(|s| s.to_string()).unwrap_or_else(|| "—".into())
+                r.status
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "—".into())
             ),
             ProbeVerdict::Reachable => format!(
                 "{n} steps reachable · HTTP {}",
-                r.status.map(|s| s.to_string()).unwrap_or_else(|| "—".into())
+                r.status
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "—".into())
             ),
             ProbeVerdict::Failed => r
                 .message

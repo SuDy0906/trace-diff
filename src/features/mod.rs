@@ -9,8 +9,8 @@ mod ui;
 mod workflow;
 
 pub use auth::{AuthMode, AuthProfile, AuthProfiles, RealmCredentials};
-pub use openapi_index::{AuthRealmHint, OpenApiIndex, templated_path_for_probe};
 pub use detect::{discover_features, DiscoverOptions};
+pub use openapi_index::{templated_path_for_probe, AuthRealmHint, OpenApiIndex};
 pub use run_report::{build_categorized_report, CategorizedRunReport, IssueCategory};
 pub use ui::run_features_interactive;
 pub use workflow::{
@@ -127,10 +127,7 @@ pub async fn probe_feature_with_auth(
         return workflow::run_workflow(&feature.url, scenario, settings).await;
     }
 
-    let method = feature
-        .method
-        .clone()
-        .unwrap_or_else(|| "GET".into());
+    let method = feature.method.clone().unwrap_or_else(|| "GET".into());
     let mut cfg = L7Config {
         timeout: settings.timeout,
         method,
@@ -201,11 +198,7 @@ async fn probe_tls_canary(feature: &DetectedFeature, settings: &ProbeSettings) -
             } else if days < 0 {
                 (
                     ProbeVerdict::Failed,
-                    format!(
-                        "TLS {} · certificate expired {}d ago",
-                        c.tls_version,
-                        -days
-                    ),
+                    format!("TLS {} · certificate expired {}d ago", c.tls_version, -days),
                 )
             } else if days < settings.cert_warn_days {
                 (
@@ -293,19 +286,16 @@ pub fn aggregate_workflow_verdict(outcomes: &[StepOutcome]) -> ProbeVerdict {
         return ProbeVerdict::Healthy;
     }
     let mut healthy = 0usize;
-    let mut reachable = 0usize;
     let mut failed = 0usize;
     for o in outcomes {
         match o.verdict {
             ProbeVerdict::Healthy => healthy += 1,
-            ProbeVerdict::Reachable => reachable += 1,
+            ProbeVerdict::Reachable => {}
             ProbeVerdict::Failed => failed += 1,
         }
     }
     if failed > 0 && healthy <= failed {
         ProbeVerdict::Failed
-    } else if failed > 0 || reachable > 0 {
-        ProbeVerdict::Healthy
     } else {
         ProbeVerdict::Healthy
     }
@@ -399,10 +389,7 @@ mod verdict_tests {
             step("b", ProbeVerdict::Healthy),
             step("c", ProbeVerdict::Reachable),
         ];
-        assert_eq!(
-            aggregate_workflow_verdict(&outcomes),
-            ProbeVerdict::Healthy
-        );
+        assert_eq!(aggregate_workflow_verdict(&outcomes), ProbeVerdict::Healthy);
     }
 
     #[test]
@@ -423,9 +410,6 @@ mod verdict_tests {
             step("c", ProbeVerdict::Healthy),
             step("d", ProbeVerdict::Failed),
         ];
-        assert_eq!(
-            aggregate_workflow_verdict(&outcomes),
-            ProbeVerdict::Healthy
-        );
+        assert_eq!(aggregate_workflow_verdict(&outcomes), ProbeVerdict::Healthy);
     }
 }

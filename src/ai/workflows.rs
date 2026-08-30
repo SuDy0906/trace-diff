@@ -75,8 +75,8 @@ pub async fn refine_workflows_from_openapi(
     cfg: &AiConfig,
 ) -> Result<WorkflowManifest> {
     let index_summary = summarize_index(openapi_json);
-    let candidate_json = serde_json::to_string_pretty(&candidates.workflows)
-        .unwrap_or_else(|_| "[]".into());
+    let candidate_json =
+        serde_json::to_string_pretty(&candidates.workflows).unwrap_or_else(|_| "[]".into());
     let user = format!(
         "Base URL: {base_url}\n\nOpenAPI index:\n```json\n{index_summary}\n```\n\nCandidate workflows to refine:\n```json\n{candidate_json}\n```\n\nReturn improved workflows JSON."
     );
@@ -138,7 +138,9 @@ pub fn save_workflow_manifest(manifest: &WorkflowManifest, path: &Path) -> Resul
 fn parse_workflow_response(raw: &str, base_url: &str) -> Result<WorkflowManifest> {
     let json_str = extract_json_block(raw);
     let v: Value = serde_json::from_str(&json_str).map_err(|e| {
-        Error::Other(format!("LLM returned invalid workflow JSON: {e}\n---\n{json_str}"))
+        Error::Other(format!(
+            "LLM returned invalid workflow JSON: {e}\n---\n{json_str}"
+        ))
     })?;
 
     let arr = v

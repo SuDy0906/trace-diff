@@ -1,10 +1,10 @@
 //! trace-diff — interactive terminal-native network & API regression diagnostics.
 
 use clap::Parser;
-use tracing_subscriber::EnvFilter;
 use trace_diff::cli::{Cli, Commands};
 use trace_diff::error::Result;
 use trace_diff::tui;
+use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> miette::Result<()> {

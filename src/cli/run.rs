@@ -6,7 +6,7 @@ use crate::error::{Error, Result};
 use crate::l7::{self, L7Config};
 use crate::meta::{self, PrivilegeLevel, RunMetadata};
 use crate::progress::ProgressEvent;
-use crate::store::{StoredRun, Store};
+use crate::store::{Store, StoredRun};
 use crate::theme::Theme;
 use crate::traceroute::{self, TraceConfig};
 use crate::tui::{self, AppView};
@@ -31,8 +31,8 @@ pub async fn execute(args: RunArgs, ui: UiOpts) -> Result<()> {
     let meta = RunMetadata::capture(args.skip_trace, args.skip_http, privileges);
     debug!(?meta, "run metadata");
 
-    let use_live_tui = output == OutputFormat::Tui
-        && std::io::IsTerminal::is_terminal(&std::io::stdout());
+    let use_live_tui =
+        output == OutputFormat::Tui && std::io::IsTerminal::is_terminal(&std::io::stdout());
 
     if use_live_tui {
         return execute_live_tui(args, ui, meta).await;
@@ -119,15 +119,10 @@ async fn execute_live_tui(args: RunArgs, ui: UiOpts, meta: RunMetadata) -> Resul
         let _ = result_tx.send(outcome);
     });
 
-    let res = tui::run_tui_with_progress(
-        progress_rx,
-        result_rx,
-        ui.theme,
-        target,
-        db_path.as_deref(),
-    )
-    .await
-    .map_err(Error::Io)?;
+    let res =
+        tui::run_tui_with_progress(progress_rx, result_rx, ui.theme, target, db_path.as_deref())
+            .await
+            .map_err(Error::Io)?;
 
     match res {
         Ok(_) => Ok(()),
@@ -194,11 +189,7 @@ async fn probe_pair(
     Ok((trace, l7))
 }
 
-fn maybe_compare(
-    store: &Store,
-    run: &StoredRun,
-    name: Option<&str>,
-) -> Result<Option<DiffReport>> {
+fn maybe_compare(store: &Store, run: &StoredRun, name: Option<&str>) -> Result<Option<DiffReport>> {
     let Some(name) = name else {
         return Ok(None);
     };
@@ -267,7 +258,7 @@ pub fn emit(
             if !std::io::IsTerminal::is_terminal(&std::io::stdout()) {
                 print!("{}", tui::render_text(run, diff));
             } else {
-                tui::run_tui(view, theme.clone(), db).map_err(Error::Io)?;
+                tui::run_tui(view, *theme, db).map_err(Error::Io)?;
             }
         }
     }

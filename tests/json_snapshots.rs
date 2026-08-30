@@ -78,7 +78,8 @@ fn sample_run(id: &str, ttfb: f64) -> StoredRun {
 #[test]
 fn snapshot_run_json_schema() {
     let run = sample_run("00000000-0000-0000-0000-000000000001", 80.0);
-    let json: serde_json::Value = serde_json::from_str(&tui::render_json(&run, None).unwrap()).unwrap();
+    let json: serde_json::Value =
+        serde_json::from_str(&tui::render_json(&run, None).unwrap()).unwrap();
     assert_json_snapshot!("run_report", json);
 }
 

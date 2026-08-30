@@ -98,12 +98,7 @@ pub fn diff_runs(
 
     let mut regressions = Vec::new();
     if let Some(ref d) = l7 {
-        push_metric_regression(
-            &mut regressions,
-            "ttfb",
-            d.ttfb_delta_pct,
-            thresholds,
-        );
+        push_metric_regression(&mut regressions, "ttfb", d.ttfb_delta_pct, thresholds);
         push_metric_regression(
             &mut regressions,
             "tcp_handshake",
@@ -185,11 +180,7 @@ fn opt_delta(current: Option<f64>, baseline: Option<f64>) -> Option<f64> {
 }
 
 fn diff_hops(baseline: &TraceResult, current: &TraceResult) -> (Vec<HopDiff>, TopologyDiff) {
-    let max_ttl = baseline
-        .hops
-        .len()
-        .max(current.hops.len())
-        .min(64);
+    let max_ttl = baseline.hops.len().max(current.hops.len()).min(64);
     let mut hops = Vec::new();
     for i in 0..max_ttl {
         let b = baseline.hops.get(i);
@@ -316,13 +307,16 @@ mod tests {
             l7: Some(sample_l7(160.0, 280.0)),
             meta: None,
         };
-        let report = diff_runs(&baseline, &current, Some("staging".into()), &DiffThresholds::default());
+        let report = diff_runs(
+            &baseline,
+            &current,
+            Some("staging".into()),
+            &DiffThresholds::default(),
+        );
         assert!(report
             .regressions
             .iter()
             .any(|r| r.metric == "ttfb" && r.severity == Severity::Critical));
-        assert!(
-            (report.l7.as_ref().unwrap().ttfb_delta_pct.unwrap() - 60.0).abs() < 1e-6
-        );
+        assert!((report.l7.as_ref().unwrap().ttfb_delta_pct.unwrap() - 60.0).abs() < 1e-6);
     }
 }

@@ -75,7 +75,10 @@ const OPENAPI_PATHS: &[&str] = &[
 ];
 
 /// Auto-detect pages, workflows, and common API paths for `base`.
-pub async fn discover_features(base: &str, opts: DiscoverOptions<'_>) -> Result<Vec<DetectedFeature>> {
+pub async fn discover_features(
+    base: &str,
+    opts: DiscoverOptions<'_>,
+) -> Result<Vec<DetectedFeature>> {
     let root = normalize_base(base)?;
     let api_host = is_api_host(&root);
     let client = Client::builder()
@@ -138,16 +141,10 @@ pub async fn discover_features(base: &str, opts: DiscoverOptions<'_>) -> Result<
                     if let Some(cfg) = opts.llm.as_ref() {
                         if ai::llm_available(cfg).await {
                             let mut llm_cfg = cfg.clone();
-                            llm_cfg.timeout_secs = llm_cfg
-                                .timeout_secs
-                                .min(DISCOVERY_LLM_TIMEOUT_SECS);
-                            match ai::refine_workflows_from_openapi(
-                                base,
-                                spec,
-                                &manifest,
-                                &llm_cfg,
-                            )
-                            .await
+                            llm_cfg.timeout_secs =
+                                llm_cfg.timeout_secs.min(DISCOVERY_LLM_TIMEOUT_SECS);
+                            match ai::refine_workflows_from_openapi(base, spec, &manifest, &llm_cfg)
+                                .await
                             {
                                 Ok(refined) => {
                                     let validated =
@@ -182,9 +179,7 @@ pub async fn discover_features(base: &str, opts: DiscoverOptions<'_>) -> Result<
                 } else if let Some(cfg) = opts.llm.as_ref() {
                     if ai::llm_available(cfg).await {
                         let mut llm_cfg = cfg.clone();
-                        llm_cfg.timeout_secs = llm_cfg
-                            .timeout_secs
-                            .min(DISCOVERY_LLM_TIMEOUT_SECS);
+                        llm_cfg.timeout_secs = llm_cfg.timeout_secs.min(DISCOVERY_LLM_TIMEOUT_SECS);
                         match ai::generate_workflows_from_openapi(base, spec, &llm_cfg).await {
                             Ok(refined) => {
                                 let validated =
@@ -250,8 +245,10 @@ pub async fn discover_features(base: &str, opts: DiscoverOptions<'_>) -> Result<
         }
     } else {
         // Always keep lightweight health checks alongside workflows.
-        for (path, id, _) in [("/health", "health", FeatureKind::Api), ("/api/health", "api_health", FeatureKind::Api)]
-        {
+        for (path, id, _) in [
+            ("/health", "health", FeatureKind::Api),
+            ("/api/health", "api_health", FeatureKind::Api),
+        ] {
             let url = join_path(&root, path);
             insert(
                 &mut by_url,
@@ -303,7 +300,7 @@ pub async fn discover_features(base: &str, opts: DiscoverOptions<'_>) -> Result<
                 .copied()
                 .collect()
         } else {
-            COMMON_PATHS.iter().copied().collect()
+            COMMON_PATHS.to_vec()
         };
 
         for (path, id, kind) in paths_to_probe {
@@ -651,9 +648,7 @@ fn manifest_entry_to_feature(entry: &Value, root: &Url, source: &str) -> Option<
         .or(parsed.path)
         .unwrap_or_else(|| url.clone());
     let id = path_to_id(&path_for_id);
-    let label = parsed
-        .label
-        .unwrap_or_else(|| human_label(&id));
+    let label = parsed.label.unwrap_or_else(|| human_label(&id));
     Some(DetectedFeature {
         id: id.clone(),
         label,
@@ -905,8 +900,8 @@ fn human_label(id: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::workflow::WorkflowScenario;
+    use super::*;
 
     #[test]
     fn href_extract() {

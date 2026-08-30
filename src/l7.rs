@@ -208,10 +208,7 @@ pub async fn probe_with_progress(
     let total_ms = elapsed_ms(t0);
 
     if let Some(tx) = &progress {
-        let _ = tx.send(ProgressEvent::L7Finished {
-            total_ms,
-            status,
-        });
+        let _ = tx.send(ProgressEvent::L7Finished { total_ms, status });
     }
 
     Ok(L7Metrics {
@@ -250,16 +247,13 @@ async fn resolve_dns(host: &str, port: u16) -> Result<SocketAddr> {
         host: host.to_string(),
         source: Box::new(e),
     })?;
-    let ip = response
-        .iter()
-        .next()
-        .ok_or_else(|| Error::Dns {
-            host: host.to_string(),
-            source: Box::new(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "no A/AAAA records",
-            )),
-        })?;
+    let ip = response.iter().next().ok_or_else(|| Error::Dns {
+        host: host.to_string(),
+        source: Box::new(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "no A/AAAA records",
+        )),
+    })?;
     Ok(SocketAddr::new(ip, port))
 }
 
@@ -352,10 +346,7 @@ mod tests {
 
     #[test]
     fn normalize() {
-        assert_eq!(
-            normalize_url("example.com").unwrap(),
-            "https://example.com"
-        );
+        assert_eq!(normalize_url("example.com").unwrap(), "https://example.com");
         assert_eq!(
             normalize_url("http://example.com/x").unwrap(),
             "http://example.com/x"

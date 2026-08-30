@@ -124,11 +124,7 @@ pub struct PathSummary {
 }
 
 impl PathSummary {
-    pub fn from_hops(
-        hops: &[HopResult],
-        min_ttl_tcp_reach: Option<u8>,
-        raw_icmp_ok: bool,
-    ) -> Self {
+    pub fn from_hops(hops: &[HopResult], min_ttl_tcp_reach: Option<u8>, raw_icmp_ok: bool) -> Self {
         let hop_count = hops.len();
         let replied = hops
             .iter()
@@ -169,10 +165,7 @@ impl PathSummary {
             }
         }
 
-        let first_reply_ttl = hops
-            .iter()
-            .find(|h| h.address.is_some())
-            .map(|h| h.ttl);
+        let first_reply_ttl = hops.iter().find(|h| h.address.is_some()).map(|h| h.ttl);
         let last_reply_ttl = hops
             .iter()
             .rev()

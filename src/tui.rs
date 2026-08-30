@@ -4,7 +4,7 @@ use crate::diff::{diff_runs, DiffReport, DiffThresholds, Severity};
 use crate::l7::L7Metrics;
 use crate::meta::RunMetadata;
 use crate::progress::ProgressEvent;
-use crate::store::{BaselineInfo, StoredRun, Store};
+use crate::store::{BaselineInfo, Store, StoredRun};
 use crate::theme::{Theme, ThemeName};
 use crate::traceroute::TraceResult;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -22,6 +22,8 @@ use std::io::{self, stdout};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedReceiver;
+
+type RunProbeResult = crate::error::Result<(StoredRun, Option<DiffReport>, Option<String>)>;
 
 #[derive(Debug, Clone)]
 pub struct AppView {
@@ -184,7 +186,10 @@ fn default_status(advanced: bool) -> String {
     }
 }
 
-pub fn render_json(run: &StoredRun, diff: Option<&DiffReport>) -> Result<String, serde_json::Error> {
+pub fn render_json(
+    run: &StoredRun,
+    diff: Option<&DiffReport>,
+) -> Result<String, serde_json::Error> {
     #[derive(serde::Serialize)]
     struct Out<'a> {
         run: &'a StoredRun,
@@ -222,7 +227,10 @@ pub fn render_text(run: &StoredRun, diff: Option<&DiffReport>) -> String {
         out.push_str(&format!("  2 Connect (TCP):   {:>8}\n", fmt_ms(l7.tcp_ms)));
         out.push_str(&format!("  3 Secure (TLS):    {:>8}\n", fmt_ms(l7.tls_ms)));
         out.push_str(&format!("  4 Wait (TTFB):     {:>8}\n", fmt_ms(l7.ttfb_ms)));
-        out.push_str(&format!("  5 Download (Body): {:>8}\n", fmt_ms(l7.transfer_ms)));
+        out.push_str(&format!(
+            "  5 Download (Body): {:>8}\n",
+            fmt_ms(l7.transfer_ms)
+        ));
         out.push_str(&format!("  Total:             {:>8.2} ms\n", l7.total_ms));
         if let Some(s) = l7.status {
             out.push_str(&format!("  Status:            {s}\n"));
@@ -257,10 +265,10 @@ pub fn render_text(run: &StoredRun, diff: Option<&DiffReport>) -> String {
         let last = tr.hops.len().saturating_sub(1);
         for (i, hop) in tr.hops.iter().enumerate() {
             let reached = hop.address.is_some() && hop.metrics.recv > 0;
-            let via = hop
-                .reply_proto
-                .map(|p| p.label())
-                .unwrap_or(if reached { "?" } else { "—" });
+            let via =
+                hop.reply_proto
+                    .map(|p| p.label())
+                    .unwrap_or(if reached { "?" } else { "—" });
             let mut meta = String::new();
             if let Some(h) = &hop.hostname {
                 meta.push_str(h);
@@ -306,7 +314,10 @@ pub fn render_text(run: &StoredRun, diff: Option<&DiffReport>) -> String {
             out.push_str("  same or better than baseline\n");
         } else {
             for r in &d.regressions {
-                out.push_str(&format!("  [{:?}] {}: {}\n", r.severity, r.metric, r.message));
+                out.push_str(&format!(
+                    "  [{:?}] {}: {}\n",
+                    r.severity, r.metric, r.message
+                ));
             }
         }
     }
@@ -321,11 +332,7 @@ fn fmt_ms(v: Option<f64>) -> String {
 }
 
 /// Run interactive TUI for a completed probe.
-pub fn run_tui(
-    view: AppView,
-    theme: Theme,
-    db: Option<&Path>,
-) -> io::Result<Option<PathBuf>> {
+pub fn run_tui(view: AppView, theme: Theme, db: Option<&Path>) -> io::Result<Option<PathBuf>> {
     let store = Store::open(db).ok();
     let baselines = store
         .as_ref()
@@ -352,13 +359,11 @@ pub fn run_tui(
 /// Live progress TUI while probes run; then switches to results.
 pub async fn run_tui_with_progress(
     mut progress_rx: UnboundedReceiver<ProgressEvent>,
-    result_rx: tokio::sync::oneshot::Receiver<
-        crate::error::Result<(StoredRun, Option<DiffReport>, Option<String>)>,
-    >,
+    result_rx: tokio::sync::oneshot::Receiver<RunProbeResult>,
     theme: Theme,
     target: String,
     db: Option<&Path>,
-) -> io::Result<crate::error::Result<(StoredRun, Option<DiffReport>, Option<String>)>> {
+) -> io::Result<RunProbeResult> {
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
@@ -395,9 +400,7 @@ pub async fn run_tui_with_progress(
     };
 
     let mut result_rx = result_rx;
-    let mut final_result: Option<
-        crate::error::Result<(StoredRun, Option<DiffReport>, Option<String>)>,
-    > = None;
+    let mut final_result: Option<RunProbeResult> = None;
 
     let loop_result = (|| -> io::Result<()> {
         loop {
@@ -416,8 +419,7 @@ pub async fn run_tui_with_progress(
                         app.probing = false;
                         match &res {
                             Ok((run, diff, tagged)) => {
-                                app.view =
-                                    AppView::from_run(run, diff.clone(), tagged.clone());
+                                app.view = AppView::from_run(run, diff.clone(), tagged.clone());
                                 if let Some(store) = &app.store {
                                     app.baselines = store.list_baselines().unwrap_or_default();
                                 }
@@ -517,7 +519,11 @@ fn handle_key(app: &mut App, code: KeyCode) -> io::Result<bool> {
         Overlay::Help | Overlay::Guide => {
             if matches!(
                 code,
-                KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('g') | KeyCode::Enter | KeyCode::Char(' ')
+                KeyCode::Esc
+                    | KeyCode::Char('?')
+                    | KeyCode::Char('g')
+                    | KeyCode::Enter
+                    | KeyCode::Char(' ')
             ) {
                 app.overlay = Overlay::None;
             }
@@ -577,8 +583,7 @@ fn handle_key(app: &mut App, code: KeyCode) -> io::Result<bool> {
                 app.baselines = store.list_baselines().unwrap_or_default();
             }
             if app.baselines.is_empty() {
-                app.status =
-                    "No baselines yet — re-run with --save-baseline NAME".into();
+                app.status = "No baselines yet — re-run with --save-baseline NAME".into();
             } else {
                 if let Some(name) = &app.view.baseline {
                     if let Some(idx) = app.baselines.iter().position(|b| &b.name == name) {
@@ -591,7 +596,11 @@ fn handle_key(app: &mut App, code: KeyCode) -> io::Result<bool> {
         }
         KeyCode::Char('t') => {
             app.theme = app.theme.cycle();
-            app.status = format!("Theme: {:?} · {}", app.theme.name, default_status(app.show_advanced));
+            app.status = format!(
+                "Theme: {:?} · {}",
+                app.theme.name,
+                default_status(app.show_advanced)
+            );
             Ok(false)
         }
         KeyCode::Char('e') => {
@@ -663,11 +672,7 @@ fn export_report(app: &App) -> io::Result<PathBuf> {
     let ts = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
     let path = std::env::temp_dir().join(format!("trace-diff-report-{ts}.json"));
     let run = StoredRun {
-        id: app
-            .view
-            .run_id
-            .clone()
-            .unwrap_or_else(|| "export".into()),
+        id: app.view.run_id.clone().unwrap_or_else(|| "export".into()),
         target: app.view.target.clone(),
         created_at: chrono::Utc::now(),
         resolved_ip: app.view.resolved.clone(),
@@ -676,8 +681,7 @@ fn export_report(app: &App) -> io::Result<PathBuf> {
         l7: app.view.l7.clone(),
         meta: app.view.meta.clone(),
     };
-    let json = render_json(&run, app.view.diff.as_ref())
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    let json = render_json(&run, app.view.diff.as_ref()).map_err(io::Error::other)?;
     std::fs::write(&path, json)?;
     Ok(path)
 }
@@ -742,8 +746,7 @@ fn verdict_of(view: &AppView) -> (VerdictKind, String, String) {
     }
 
     if let Some(d) = &view.diff {
-        if d
-            .regressions
+        if d.regressions
             .iter()
             .any(|r| matches!(r.severity, Severity::Critical))
         {
@@ -753,8 +756,7 @@ fn verdict_of(view: &AppView) -> (VerdictKind, String, String) {
                 "Much slower than your baseline — see Compare below".into(),
             );
         }
-        if d
-            .regressions
+        if d.regressions
             .iter()
             .any(|r| matches!(r.severity, Severity::Warn))
         {
@@ -864,11 +866,36 @@ fn draw_journey(frame: &mut ratatui::Frame, area: Rect, app: &App) {
 
     // Keep plain + technical names together on every row.
     let stages = [
-        ("1 Find (DNS)", "DNS", "Look up address", l7.dns_ms.unwrap_or(0.0)),
-        ("2 Connect (TCP)", "TCP", "Open socket", l7.tcp_ms.unwrap_or(0.0)),
-        ("3 Secure (TLS)", "TLS", "Encrypt / HTTPS", l7.tls_ms.unwrap_or(0.0)),
-        ("4 Wait (TTFB)", "TTFB", "Server first byte", l7.ttfb_ms.unwrap_or(0.0)),
-        ("5 Download (Body)", "Body", "Read response", l7.transfer_ms.unwrap_or(0.0)),
+        (
+            "1 Find (DNS)",
+            "DNS",
+            "Look up address",
+            l7.dns_ms.unwrap_or(0.0),
+        ),
+        (
+            "2 Connect (TCP)",
+            "TCP",
+            "Open socket",
+            l7.tcp_ms.unwrap_or(0.0),
+        ),
+        (
+            "3 Secure (TLS)",
+            "TLS",
+            "Encrypt / HTTPS",
+            l7.tls_ms.unwrap_or(0.0),
+        ),
+        (
+            "4 Wait (TTFB)",
+            "TTFB",
+            "Server first byte",
+            l7.ttfb_ms.unwrap_or(0.0),
+        ),
+        (
+            "5 Download (Body)",
+            "Body",
+            "Read response",
+            l7.transfer_ms.unwrap_or(0.0),
+        ),
     ];
     let total = l7.total_ms.max(1.0);
     let max_bar = 12usize;
@@ -927,7 +954,11 @@ fn draw_journey(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     for (label, _tech, hint, ms) in &stages {
         let pct = (*ms / total).clamp(0.0, 1.0);
         let fill = ((pct * max_bar as f64).round() as usize).max(if *ms > 0.0 { 1 } else { 0 });
-        let bar = format!("{}{}", "█".repeat(fill), "░".repeat(max_bar.saturating_sub(fill)));
+        let bar = format!(
+            "{}{}",
+            "█".repeat(fill),
+            "░".repeat(max_bar.saturating_sub(fill))
+        );
         let heat = stage_heat(*ms);
         lines.push(Line::from(vec![
             Span::styled(
@@ -955,11 +986,10 @@ fn draw_journey(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         }
     }
 
-    let p = Paragraph::new(lines).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(" Request journey — Find(DNS) Connect(TCP) Secure(TLS) Wait(TTFB) Download(Body) "),
-    );
+    let p =
+        Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(
+            " Request journey — Find(DNS) Connect(TCP) Secure(TLS) Wait(TTFB) Download(Body) ",
+        ));
     frame.render_widget(p, area);
 }
 
@@ -1043,8 +1073,11 @@ fn draw_progress(frame: &mut ratatui::Frame, area: Rect, app: &App) {
 
 fn draw_hops(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     let Some(tr) = app.view.trace.as_ref() else {
-        let p = Paragraph::new("Path tracing skipped (omit --skip-trace to enable)")
-            .block(Block::default().borders(Borders::ALL).title(" Path to server "));
+        let p = Paragraph::new("Path tracing skipped (omit --skip-trace to enable)").block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Path to server "),
+        );
         frame.render_widget(p, area);
         return;
     };
@@ -1098,7 +1131,10 @@ fn draw_hops(frame: &mut ratatui::Frame, area: Rect, app: &App) {
             Style::default().fg(app.theme.muted),
         ),
         Span::raw("  ·  "),
-        Span::styled(format!("via {protos}"), Style::default().fg(app.theme.accent)),
+        Span::styled(
+            format!("via {protos}"),
+            Style::default().fg(app.theme.accent),
+        ),
         Span::raw("  ·  "),
         Span::styled(
             format!("mode {}", tr.probe_kind.label()),
@@ -1159,11 +1195,8 @@ fn draw_hops(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         ])
     };
 
-    let head = Paragraph::new(vec![Line::from(summary_spans), ribbon, as_line]).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(" Path map "),
-    );
+    let head = Paragraph::new(vec![Line::from(summary_spans), ribbon, as_line])
+        .block(Block::default().borders(Borders::ALL).title(" Path map "));
     frame.render_widget(head, chunks[0]);
 
     // --- Hop detail table ---
@@ -1188,7 +1221,9 @@ fn draw_hops(frame: &mut ratatui::Frame, area: Rect, app: &App) {
                 "○"
             };
             let marker_style = if is_dest {
-                Style::default().fg(app.theme.ok).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(app.theme.ok)
+                    .add_modifier(Modifier::BOLD)
             } else if live {
                 Style::default().fg(heat)
             } else {
@@ -1274,7 +1309,9 @@ fn draw_hops(frame: &mut ratatui::Frame, area: Rect, app: &App) {
 fn build_path_ribbon(tr: &TraceResult, app: &App) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = vec![Span::styled(
         "you ",
-        Style::default().fg(app.theme.brand).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(app.theme.brand)
+            .add_modifier(Modifier::BOLD),
     )];
 
     let last = tr.hops.len().saturating_sub(1);
@@ -1292,10 +1329,7 @@ fn build_path_ribbon(tr: &TraceResult, app: &App) -> Line<'static> {
     for &i in &indices {
         if let Some(p) = prev {
             if i > p + 1 {
-                spans.push(Span::styled(
-                    "╌…╌",
-                    Style::default().fg(app.theme.muted),
-                ));
+                spans.push(Span::styled("╌…╌", Style::default().fg(app.theme.muted)));
             } else {
                 spans.push(Span::styled("─", Style::default().fg(app.theme.muted)));
             }
@@ -1322,7 +1356,9 @@ fn build_path_ribbon(tr: &TraceResult, app: &App) -> Line<'static> {
 
     spans.push(Span::styled(
         " dest",
-        Style::default().fg(app.theme.ok).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(app.theme.ok)
+            .add_modifier(Modifier::BOLD),
     ));
     Line::from(spans)
 }
@@ -1332,7 +1368,9 @@ fn draw_diff(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         (None, Some(name)) => vec![
             Line::from(Span::styled(
                 format!("Snapshot saved as “{name}”"),
-                Style::default().fg(app.theme.ok).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(app.theme.ok)
+                    .add_modifier(Modifier::BOLD),
             )),
             Line::from(Span::styled(
                 "Next: press b to compare, or re-run:  trace-diff diff NAME <url>",
@@ -1342,14 +1380,18 @@ fn draw_diff(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         (None, None) => vec![
             Line::from(Span::styled(
                 "No comparison yet",
-                Style::default().fg(app.theme.warn).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(app.theme.warn)
+                    .add_modifier(Modifier::BOLD),
             )),
             Line::from("Press b to pick a saved baseline, or run with --save-baseline NAME"),
         ],
         (Some(d), _) if d.regressions.is_empty() => {
             let mut lines = vec![Line::from(Span::styled(
                 "✓ Same or better than baseline",
-                Style::default().fg(app.theme.ok).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(app.theme.ok)
+                    .add_modifier(Modifier::BOLD),
             ))];
             if let Some(l7) = &d.l7 {
                 if let Some(delta) = l7.ttfb_delta_pct {
@@ -1528,8 +1570,8 @@ fn draw_baseline_picker(frame: &mut ratatui::Frame, area: Rect, app: &App) {
             style,
         )));
     }
-    let p = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).title(" Baselines "));
+    let p =
+        Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(" Baselines "));
     frame.render_widget(p, popup);
 }
 
@@ -1617,7 +1659,11 @@ mod tests {
         };
         terminal.draw(|f| draw(f, &app)).unwrap();
         let buf = terminal.backend().buffer().clone();
-        let flat: String = buf.content().iter().map(|c| c.symbol().to_string()).collect();
+        let flat: String = buf
+            .content()
+            .iter()
+            .map(|c| c.symbol().to_string())
+            .collect();
         assert!(flat.contains("trace-diff"));
     }
 

@@ -153,9 +153,8 @@ fn login_realm_spec(realm: AuthRealmHint, workflows: &[WorkflowScenario]) -> Opt
         login.capture_bearer.as_deref().unwrap_or("access_token")
     );
 
-    let mut notes = vec![
-        "Fill required fields OR paste a bearer token to skip the login step.".into(),
-    ];
+    let mut notes =
+        vec!["Fill required fields OR paste a bearer token to skip the login step.".into()];
     if fields.iter().any(|f| f.key.contains("captcha")) {
         notes.push("This API requires captcha — email/password alone will not succeed.".into());
     }
@@ -189,7 +188,7 @@ fn find_login_step(realm: AuthRealmHint, workflows: &[WorkflowScenario]) -> Opti
 fn workflow_realm_matches(w: &WorkflowScenario, realm: AuthRealmHint) -> bool {
     w.auth_realm
         .as_deref()
-        .and_then(AuthRealmHint::from_str)
+        .and_then(|s| s.parse::<AuthRealmHint>().ok())
         .map(|r| r == realm)
         .unwrap_or_else(|| match realm {
             AuthRealmHint::Admin => w.id.contains("admin"),
@@ -200,7 +199,9 @@ fn workflow_realm_matches(w: &WorkflowScenario, realm: AuthRealmHint) -> bool {
 }
 
 fn step_realm(s: &WorkflowStep) -> Option<AuthRealmHint> {
-    s.auth_realm.as_deref().and_then(AuthRealmHint::from_str)
+    s.auth_realm
+        .as_deref()
+        .and_then(|s| s.parse::<AuthRealmHint>().ok())
 }
 
 fn login_body_field_keys(step: &WorkflowStep) -> Vec<String> {
@@ -318,7 +319,10 @@ mod tests {
             }],
         }];
         let specs = build_realm_auth_specs(&wfs);
-        let user = specs.iter().find(|s| s.realm == AuthRealmHint::User).unwrap();
+        let user = specs
+            .iter()
+            .find(|s| s.realm == AuthRealmHint::User)
+            .unwrap();
         assert!(user.fields.iter().any(|f| f.key == "captcha_token"));
         assert!(user.fields.iter().any(|f| f.key == "bearer_token"));
     }

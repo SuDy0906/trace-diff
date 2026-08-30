@@ -224,10 +224,7 @@ pub struct BaselineArgs {
 #[derive(Debug, Clone, Subcommand)]
 pub enum BaselineAction {
     /// Tag an existing run id as a named baseline
-    Tag {
-        run_id: String,
-        name: String,
-    },
+    Tag { run_id: String, name: String },
     /// Delete a named baseline
     Delete { name: String },
     /// Show baseline details

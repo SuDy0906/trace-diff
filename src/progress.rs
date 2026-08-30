@@ -6,21 +6,37 @@ use std::net::IpAddr;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ProgressEvent {
-    Started { target: String },
-    TraceStarted { max_ttl: u8 },
+    Started {
+        target: String,
+    },
+    TraceStarted {
+        max_ttl: u8,
+    },
     TraceHop {
         ttl: u8,
         max_ttl: u8,
         address: Option<String>,
         samples: u32,
     },
-    TraceFinished { hops: usize, reached: bool },
-    TraceSkipped { reason: String },
-    L7Phase { phase: String },
-    L7Finished { total_ms: f64, status: Option<u16> },
+    TraceFinished {
+        hops: usize,
+        reached: bool,
+    },
+    TraceSkipped {
+        reason: String,
+    },
+    L7Phase {
+        phase: String,
+    },
+    L7Finished {
+        total_ms: f64,
+        status: Option<u16>,
+    },
     Saving,
     Done,
-    Error { message: String },
+    Error {
+        message: String,
+    },
 }
 
 impl ProgressEvent {
@@ -38,11 +54,11 @@ impl ProgressEvent {
             Self::Started { target } => format!("starting probe → {target}"),
             Self::TraceStarted { max_ttl } => format!("traceroute (max TTL {max_ttl})"),
             Self::TraceHop {
-                ttl, max_ttl, address, ..
-            } => format!(
-                "hop {ttl}/{max_ttl}: {}",
-                address.as_deref().unwrap_or("*")
-            ),
+                ttl,
+                max_ttl,
+                address,
+                ..
+            } => format!("hop {ttl}/{max_ttl}: {}", address.as_deref().unwrap_or("*")),
             Self::TraceFinished { hops, reached } => {
                 format!("traceroute done ({hops} hops, reached={reached})")
             }

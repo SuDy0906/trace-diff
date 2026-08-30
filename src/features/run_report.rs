@@ -1,6 +1,9 @@
 //! Categorized post-run report: severe vs auth vs compatibility vs performance.
 
-use super::{is_transient_error_message, is_write_flow, FeatureResult, FeatureRunReport, ProbeVerdict, StepOutcome};
+use super::{
+    is_transient_error_message, is_write_flow, FeatureResult, FeatureRunReport, ProbeVerdict,
+    StepOutcome,
+};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -25,7 +28,9 @@ impl IssueCategory {
         match self {
             Self::Severe => "Likely real service failures — investigate backend health",
             Self::Auth => "Missing or rejected credentials — fix auth profile",
-            Self::Compatibility => "Route exists but probe data/method doesn't match production use",
+            Self::Compatibility => {
+                "Route exists but probe data/method doesn't match production use"
+            }
             Self::Performance => "Slow or timed out — may be env load, not a broken API",
         }
     }
@@ -92,18 +97,26 @@ fn collect_feature_issues(result: &FeatureResult) -> Vec<ClassifiedIssue> {
     result
         .steps
         .iter()
-        .filter_map(|step| classify_step(&result.feature.label, step, is_write_flow(&result.feature)))
+        .filter_map(|step| {
+            classify_step(&result.feature.label, step, is_write_flow(&result.feature))
+        })
         .collect()
 }
 
 fn classify_flat_result(result: &FeatureResult) -> Option<ClassifiedIssue> {
-    if result.verdict == ProbeVerdict::Healthy && !result.message.to_ascii_lowercase().contains("warn") {
+    if result.verdict == ProbeVerdict::Healthy
+        && !result.message.to_ascii_lowercase().contains("warn")
+    {
         return None;
     }
     let write = is_write_flow(&result.feature);
     let pseudo = StepOutcome {
         name: result.feature.label.clone(),
-        method: result.feature.method.clone().unwrap_or_else(|| "GET".into()),
+        method: result
+            .feature
+            .method
+            .clone()
+            .unwrap_or_else(|| "GET".into()),
         path: result.feature.url.clone(),
         status: result.status,
         verdict: result.verdict,
@@ -184,7 +197,8 @@ fn categorize(step: &StepOutcome, write_flow: bool) -> (IssueCategory, &'static 
         );
     }
 
-    if matches!(status, 400 | 405 | 422) || (msg.contains("expected") && step.verdict != ProbeVerdict::Failed)
+    if matches!(status, 400 | 405 | 422)
+        || (msg.contains("expected") && step.verdict != ProbeVerdict::Failed)
     {
         return (
             IssueCategory::Compatibility,
@@ -262,12 +276,7 @@ mod tests {
 
     #[test]
     fn write_502_is_compatibility() {
-        let s = step(
-            502,
-            ProbeVerdict::Failed,
-            "HTTP 502",
-            "/api/billing/cancel",
-        );
+        let s = step(502, ProbeVerdict::Failed, "HTTP 502", "/api/billing/cancel");
         let issue = classify_step("billing write smoke", &s, true).unwrap();
         assert_eq!(issue.category, IssueCategory::Compatibility);
     }

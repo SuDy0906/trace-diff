@@ -342,9 +342,9 @@ impl Store {
     }
 
     pub fn list_runs(&self, limit: usize) -> Result<Vec<StoredRun>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id FROM runs ORDER BY created_at DESC LIMIT ?1",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM runs ORDER BY created_at DESC LIMIT ?1")?;
         let ids: Vec<String> = stmt
             .query_map(params![limit as i64], |r| r.get(0))?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -353,9 +353,8 @@ impl Store {
 }
 
 pub fn default_db_path() -> Result<PathBuf> {
-    let dirs = ProjectDirs::from("dev", "trace-diff", "trace-diff").ok_or_else(|| {
-        Error::Other("could not resolve platform data directory".into())
-    })?;
+    let dirs = ProjectDirs::from("dev", "trace-diff", "trace-diff")
+        .ok_or_else(|| Error::Other("could not resolve platform data directory".into()))?;
     Ok(dirs.data_dir().join("trace-diff.db"))
 }
 
@@ -380,11 +379,17 @@ mod tests {
             bytes_read: 1256,
             measured_at: Utc::now(),
         };
-        let id = store.save_run("https://example.com", None, Some(&l7)).unwrap();
+        let id = store
+            .save_run("https://example.com", None, Some(&l7))
+            .unwrap();
         store.tag_baseline(&id, "staging").unwrap();
         let b = store.get_baseline("staging").unwrap();
         assert_eq!(b.l7.as_ref().unwrap().ttfb_ms, Some(80.0));
-        assert!(store.list_baselines().unwrap().iter().any(|x| x.name == "staging"));
+        assert!(store
+            .list_baselines()
+            .unwrap()
+            .iter()
+            .any(|x| x.name == "staging"));
     }
 
     #[test]

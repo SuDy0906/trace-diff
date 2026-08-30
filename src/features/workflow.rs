@@ -8,14 +8,13 @@ use std::path::Path;
 use std::time::Instant;
 use url::Url;
 
+use super::auth::{AuthMode, AuthProfiles};
+use super::openapi_index::{
+    self, infer_realm, infer_realm_from_tag, AuthRealmHint, EndpointOp, OpenApiIndex,
+};
 use super::{
     aggregate_workflow_verdict, classify_status, is_transient_probe_error, FeatureResult,
     ProbeSettings, ProbeVerdict, StepOutcome,
-};
-use super::auth::{AuthMode, AuthProfiles};
-use super::openapi_index::{
-    self, AuthRealmHint, EndpointOp, OpenApiIndex, infer_realm,
-    infer_realm_from_tag,
 };
 
 pub const MANIFEST_VERSION: u32 = 5;
@@ -132,7 +131,7 @@ pub async fn run_workflow(
     let flow_realm = scenario
         .auth_realm
         .as_deref()
-        .and_then(AuthRealmHint::from_str)
+        .and_then(|s| s.parse::<AuthRealmHint>().ok())
         .unwrap_or(AuthRealmHint::User);
     let mut token = auth.bearer_for_realm(flow_realm).map(|s| s.to_string());
     if token.is_none() {
@@ -147,7 +146,7 @@ pub async fn run_workflow(
         let step_realm = step
             .auth_realm
             .as_deref()
-            .and_then(AuthRealmHint::from_str)
+            .and_then(|s| s.parse::<AuthRealmHint>().ok())
             .unwrap_or(flow_realm);
 
         if !auth.realm_ready(step_realm) && step_realm != AuthRealmHint::Public {
@@ -173,16 +172,9 @@ pub async fn run_workflow(
             continue;
         }
 
-        let probe_path = step
-            .probe_path
-            .as_deref()
-            .unwrap_or(&step.path);
+        let probe_path = step.probe_path.as_deref().unwrap_or(&step.path);
         let mut url = join_path(&root, probe_path);
-        if let Some(qs) = step
-            .query
-            .as_ref()
-            .and_then(|q| query_from_value(q))
-        {
+        if let Some(qs) = step.query.as_ref().and_then(query_from_value) {
             if !qs.is_empty() {
                 url = format!("{url}?{qs}");
             }
@@ -364,7 +356,10 @@ fn join_path(root: &Url, path: &str) -> String {
     u.to_string()
 }
 
-pub fn load_workflow_manifest(path: &Path, base: &str) -> Result<Vec<crate::features::DetectedFeature>> {
+pub fn load_workflow_manifest(
+    path: &Path,
+    base: &str,
+) -> Result<Vec<crate::features::DetectedFeature>> {
     let text = std::fs::read_to_string(path)?;
     let manifest: WorkflowManifest = serde_json::from_str(&text)?;
     if manifest.manifest_version != MANIFEST_VERSION && manifest.manifest_version != 4 {
@@ -488,20 +483,18 @@ pub fn validate_workflow(
         ));
     }
 
-    if w.id.ends_with("_flow") || w.id.contains("_flow_") {
-        if w.kind != FlowKind::Write {
-            let non_login: Vec<_> = w
-                .steps
-                .iter()
-                .filter(|s| s.capture_bearer.is_none())
-                .collect();
-            if let Some(first) = non_login.first() {
-                if matches!(
-                    first.method.to_ascii_uppercase().as_str(),
-                    "POST" | "PUT" | "PATCH" | "DELETE"
-                ) {
-                    errors.push("domain flow starts with write/destructive step".into());
-                }
+    if (w.id.ends_with("_flow") || w.id.contains("_flow_")) && w.kind != FlowKind::Write {
+        let non_login: Vec<_> = w
+            .steps
+            .iter()
+            .filter(|s| s.capture_bearer.is_none())
+            .collect();
+        if let Some(first) = non_login.first() {
+            if matches!(
+                first.method.to_ascii_uppercase().as_str(),
+                "POST" | "PUT" | "PATCH" | "DELETE"
+            ) {
+                errors.push("domain flow starts with write/destructive step".into());
             }
         }
     }
@@ -517,10 +510,12 @@ fn build_health_smoke(index: &OpenApiIndex) -> Option<WorkflowScenario> {
     let mut candidates: Vec<&EndpointOp> = index
         .ops
         .iter()
-        .filter(|op| op.is_get() && !op.requires_auth && !op.has_path_params() && is_strict_health_op(op))
+        .filter(|op| {
+            op.is_get() && !op.requires_auth && !op.has_path_params() && is_strict_health_op(op)
+        })
         .collect();
 
-    candidates.sort_by(|a, b| health_rank(b).cmp(&health_rank(a)));
+    candidates.sort_by_key(|b| std::cmp::Reverse(health_rank(b)));
     candidates.dedup_by(|a, b| a.path == b.path);
 
     let steps: Vec<WorkflowStep> = candidates
@@ -585,7 +580,8 @@ fn build_auth_smoke(index: &OpenApiIndex) -> Option<WorkflowScenario> {
     Some(WorkflowScenario {
         id: "auth_smoke".into(),
         label: "Auth smoke".into(),
-        description: "Login and authenticated reads (set TRACE_DIFF_EMAIL / TRACE_DIFF_PASSWORD)".into(),
+        description: "Login and authenticated reads (set TRACE_DIFF_EMAIL / TRACE_DIFF_PASSWORD)"
+            .into(),
         kind: FlowKind::Read,
         auth_realm: Some(realm.as_str().into()),
         steps,
@@ -683,19 +679,14 @@ fn chunk_ops_into_flows(
 
     let needs_auth = realm != AuthRealmHint::Public
         && (ops.iter().any(|op| op_needs_auth(op)) || realm.uses_login_capture());
-    let mut chunks: Vec<Vec<&EndpointOp>> = ops
-        .chunks(ENDPOINTS_PER_FLOW)
-        .map(|c| c.to_vec())
-        .collect();
+    let mut chunks: Vec<Vec<&EndpointOp>> =
+        ops.chunks(ENDPOINTS_PER_FLOW).map(|c| c.to_vec()).collect();
 
     // Avoid a orphan single-endpoint public chunk (validation requires 2+ steps).
     if !needs_auth && chunks.len() > 1 {
-        if let Some(last) = chunks.last() {
-            if last.len() == 1 {
-                let orphan = chunks.pop().unwrap();
-                if let Some(prev) = chunks.last_mut() {
-                    prev.extend(orphan);
-                }
+        if let Some(orphan) = chunks.pop_if(|last| last.len() == 1) {
+            if let Some(prev) = chunks.last_mut() {
+                prev.extend(orphan);
             }
         }
     }
@@ -915,8 +906,14 @@ fn login_body_for_realm(op: &EndpointOp, realm: AuthRealmHint) -> Value {
                 body.insert(prop.clone(), Value::String(ph));
             }
             if body.is_empty() {
-                body.insert("email".into(), Value::String(login_placeholder_for_field("email", realm)));
-                body.insert("password".into(), Value::String(login_placeholder_for_field("password", realm)));
+                body.insert(
+                    "email".into(),
+                    Value::String(login_placeholder_for_field("email", realm)),
+                );
+                body.insert(
+                    "password".into(),
+                    Value::String(login_placeholder_for_field("password", realm)),
+                );
             }
             return Value::Object(body);
         }
@@ -1073,7 +1070,11 @@ fn query_from_value(q: &Value) -> Option<String> {
 pub fn detect_auth_realms(workflows: &[WorkflowScenario]) -> Vec<AuthRealmHint> {
     let mut set = std::collections::BTreeSet::new();
     for w in workflows {
-        if let Some(r) = w.auth_realm.as_deref().and_then(AuthRealmHint::from_str) {
+        if let Some(r) = w
+            .auth_realm
+            .as_deref()
+            .and_then(|s| s.parse::<AuthRealmHint>().ok())
+        {
             if r != AuthRealmHint::Public {
                 set.insert(r);
             }
@@ -1091,7 +1092,7 @@ pub fn detect_auth_realms(workflows: &[WorkflowScenario]) -> Vec<AuthRealmHint> 
 pub fn workflow_realm(w: &WorkflowScenario) -> Option<AuthRealmHint> {
     w.auth_realm
         .as_deref()
-        .and_then(AuthRealmHint::from_str)
+        .and_then(|s| s.parse::<AuthRealmHint>().ok())
         .or_else(|| {
             if w.id.contains("admin") {
                 Some(AuthRealmHint::Admin)
@@ -1200,15 +1201,13 @@ fn is_strict_health_step(step: &WorkflowStep, index: &OpenApiIndex) -> bool {
 
 fn is_profile_path(path: &str) -> bool {
     let p = path.to_lowercase();
-    p.ends_with("/me")
-        || p.contains("/profile")
-        || (p.contains("/auth/") && !p.contains("login"))
+    p.ends_with("/me") || p.contains("/profile") || (p.contains("/auth/") && !p.contains("login"))
 }
 
 fn path_to_step_name(path: &str) -> String {
     path.trim_matches('/')
         .split('/')
-        .last()
+        .next_back()
         .unwrap_or("step")
         .replace(['{', '}'], "")
         .to_lowercase()
@@ -1216,7 +1215,7 @@ fn path_to_step_name(path: &str) -> String {
 
 /// Fallback smoke workflows when OpenAPI is unavailable.
 pub fn default_smoke_workflows(base: &str) -> Vec<crate::features::DetectedFeature> {
-    let scenarios = vec![
+    let scenarios = [
         WorkflowScenario {
             id: "health_smoke".into(),
             label: "Health smoke".into(),
@@ -1296,7 +1295,11 @@ mod tests {
             }
         }"#;
         let wfs = heuristic_workflows_from_openapi(spec);
-        assert!(wfs.len() >= 3, "expected health + auth + admin, got {}", wfs.len());
+        assert!(
+            wfs.len() >= 3,
+            "expected health + auth + admin, got {}",
+            wfs.len()
+        );
         assert!(wfs.iter().any(|w| w.id == "health_smoke"));
         assert!(wfs.iter().any(|w| w.id == "auth_smoke"));
         assert!(wfs.iter().any(|w| w.id == "admin_flow"));
@@ -1331,11 +1334,13 @@ mod tests {
 
     #[test]
     fn domain_tag_chunks_into_multiple_flows() {
-        let mut paths = String::from(r#"{
+        let mut paths = String::from(
+            r#"{
             "security": [{"Bearer": []}],
             "paths": {
                 "/api/auth/login": { "post": { "tags": ["auth"] } },
-        "#);
+        "#,
+        );
         for i in 0..12 {
             paths.push_str(&format!(
                 r#""/api/admin/route{i}": {{ "get": {{ "tags": ["admin"], "summary": "Route {i}" }} }},"#
@@ -1351,7 +1356,10 @@ mod tests {
             admin.len()
         );
         let covered: usize = admin.iter().map(|w| w.steps.len()).sum();
-        assert!(covered >= 10, "expected most admin routes covered, got {covered} steps");
+        assert!(
+            covered >= 10,
+            "expected most admin routes covered, got {covered} steps"
+        );
     }
 
     #[test]
@@ -1410,7 +1418,10 @@ mod tests {
             }
         }"#;
         let wfs = heuristic_workflows_from_openapi(spec);
-        let ann = wfs.iter().find(|w| w.id == "annotators_flow").expect("annotators_flow");
+        let ann = wfs
+            .iter()
+            .find(|w| w.id == "annotators_flow")
+            .expect("annotators_flow");
         assert_eq!(ann.steps[0].path, "/api/annotators/login");
         assert!(ann.steps[1].use_bearer);
         assert_eq!(ann.auth_realm.as_deref(), Some("annotator"));
@@ -1433,7 +1444,10 @@ mod tests {
             }
         }"#;
         let wfs = heuristic_workflows_from_openapi(spec);
-        let admin = wfs.iter().find(|w| w.id == "admin_flow").expect("admin_flow");
+        let admin = wfs
+            .iter()
+            .find(|w| w.id == "admin_flow")
+            .expect("admin_flow");
         assert!(!admin.steps.iter().any(|s| s.capture_bearer.is_some()));
         assert_eq!(admin.auth_realm.as_deref(), Some("admin"));
     }

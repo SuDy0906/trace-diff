@@ -4,8 +4,8 @@ use crate::features::openapi_index::AuthRealmHint;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::OnceLock;
 use std::path::Path;
+use std::sync::OnceLock;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RealmCredentials {
@@ -26,7 +26,11 @@ pub struct RealmCredentials {
 impl RealmCredentials {
     pub fn has_login(&self) -> bool {
         self.email.as_ref().map(|s| !s.is_empty()).unwrap_or(false)
-            && self.password.as_ref().map(|s| !s.is_empty()).unwrap_or(false)
+            && self
+                .password
+                .as_ref()
+                .map(|s| !s.is_empty())
+                .unwrap_or(false)
     }
 
     pub fn has_secret(&self) -> bool {
@@ -232,11 +236,13 @@ impl AuthProfiles {
             "password" => p.password.clone().or_else(|| self.password.clone()),
             "secret" => p.secret.clone(),
             "bearer_token" | "access_token" => {
-                p.bearer_token
-                    .clone()
-                    .or_else(|| self.bearer_token.clone())
+                p.bearer_token.clone().or_else(|| self.bearer_token.clone())
             }
-            other => p.extras.get(other).cloned().or_else(|| self.lookup(other, realm)),
+            other => p
+                .extras
+                .get(other)
+                .cloned()
+                .or_else(|| self.lookup(other, realm)),
         }
     }
 
@@ -248,9 +254,7 @@ impl AuthProfiles {
     }
 
     fn profile_mut(&mut self, realm: AuthRealmHint) -> &mut RealmCredentials {
-        self.profiles
-            .entry(realm.as_str().to_string())
-            .or_default()
+        self.profiles.entry(realm.as_str().to_string()).or_default()
     }
 
     pub fn has_login(&self) -> bool {
@@ -305,7 +309,11 @@ impl AuthProfiles {
             AuthMode::None => {}
             AuthMode::BearerCapture | AuthMode::BearerStatic => {
                 if realm == AuthRealmHint::Admin {
-                    if let Some(secret) = self.profile(realm).secret.as_ref().filter(|s| !s.is_empty())
+                    if let Some(secret) = self
+                        .profile(realm)
+                        .secret
+                        .as_ref()
+                        .filter(|s| !s.is_empty())
                     {
                         headers.push(("Authorization".into(), format!("Bearer {secret}")));
                     }
@@ -367,13 +375,15 @@ impl AuthProfiles {
             "TRACE_DIFF_ANNOTATOR_EMAIL" | "CONFUCIUS_ANNOTATOR_EMAIL" | "ANNOTATOR_EMAIL" => {
                 self.profile(AuthRealmHint::Annotator).email.clone()
             }
-            "TRACE_DIFF_ANNOTATOR_PASSWORD" | "CONFUCIUS_ANNOTATOR_PASSWORD" | "ANNOTATOR_PASSWORD" => {
-                self.profile(AuthRealmHint::Annotator).password.clone()
-            }
+            "TRACE_DIFF_ANNOTATOR_PASSWORD"
+            | "CONFUCIUS_ANNOTATOR_PASSWORD"
+            | "ANNOTATOR_PASSWORD" => self.profile(AuthRealmHint::Annotator).password.clone(),
             "TRACE_DIFF_ADMIN_SECRET" | "CONFUCIUS_ADMIN_KEY" | "ADMIN_SECRET" => {
                 self.profile(AuthRealmHint::Admin).secret.clone()
             }
-            "TRACE_DIFF_BEARER_TOKEN" => p.bearer_token.clone().or_else(|| self.bearer_token.clone()),
+            "TRACE_DIFF_BEARER_TOKEN" => {
+                p.bearer_token.clone().or_else(|| self.bearer_token.clone())
+            }
             "TRACE_DIFF_CAPTCHA_TOKEN" | "CAPTCHA_TOKEN" => p
                 .extras
                 .get("captcha_token")
@@ -412,16 +422,20 @@ impl AuthMode {
             Self::ApiKeyHeader { .. } => "api_key_header",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Self {
-        match s {
+impl std::str::FromStr for AuthMode {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
             "bearer_capture" => Self::BearerCapture,
             "bearer_static" => Self::BearerStatic,
             "api_key_header" => Self::ApiKeyHeader {
                 header_name: "X-Api-Key".into(),
             },
             _ => Self::None,
-        }
+        })
     }
 }
 
@@ -511,6 +525,9 @@ mod tests {
             AuthRealmHint::Annotator,
         );
         assert_eq!(ann_body["email"], "ann@b.com");
-        assert_eq!(profiles.lookup("ADMIN_SECRET", AuthRealmHint::Admin), Some("admin-key".into()));
+        assert_eq!(
+            profiles.lookup("ADMIN_SECRET", AuthRealmHint::Admin),
+            Some("admin-key".into())
+        );
     }
 }

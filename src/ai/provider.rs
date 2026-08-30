@@ -57,7 +57,12 @@ pub async fn llm_available(cfg: &AiConfig) -> bool {
                 Ok(c) => c,
                 Err(_) => return false,
             };
-            client.get(&url).send().await.map(|r| r.status().is_success()).unwrap_or(false)
+            client
+                .get(&url)
+                .send()
+                .await
+                .map(|r| r.status().is_success())
+                .unwrap_or(false)
         }
         AiProvider::Groq => cfg
             .groq_api_key
@@ -89,7 +94,10 @@ pub async fn resolve_ollama_model(cfg: &AiConfig) -> Result<String> {
     }
 
     // Prefix match (e.g. qwen2.5:7b matches qwen2.5:7b-instruct).
-    if let Some(m) = installed.iter().find(|m| m.starts_with(wanted) || wanted.starts_with(m.as_str())) {
+    if let Some(m) = installed
+        .iter()
+        .find(|m| m.starts_with(wanted) || wanted.starts_with(m.as_str()))
+    {
         eprintln!("Note: using Ollama model '{m}' ({} not installed)", wanted);
         return Ok(m.clone());
     }
@@ -116,23 +124,13 @@ pub async fn resolve_ollama_model(cfg: &AiConfig) -> Result<String> {
 }
 
 const OLLAMA_MODEL_PREFS: &[&str] = &[
-    "qwen2.5",
-    "llama3.2",
-    "llama3.1",
-    "llama3",
-    "mistral",
-    "phi3",
-    "gemma",
+    "qwen2.5", "llama3.2", "llama3.1", "llama3", "mistral", "phi3", "gemma",
 ];
 
 async fn ollama_list_models(cfg: &AiConfig) -> Result<Vec<String>> {
     let url = format!("{}/api/tags", cfg.ollama_host.trim_end_matches('/'));
     let client = http_client(cfg.timeout_secs)?;
-    let resp = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| ollama_hint(e))?;
+    let resp = client.get(&url).send().await.map_err(ollama_hint)?;
     if !resp.status().is_success() {
         return Err(Error::Other(format!(
             "Ollama /api/tags HTTP {}",
@@ -140,18 +138,11 @@ async fn ollama_list_models(cfg: &AiConfig) -> Result<Vec<String>> {
         )));
     }
     let parsed: OllamaTagsResponse = resp.json().await.map_err(|e| Error::Other(e.to_string()))?;
-    Ok(parsed
-        .models
-        .into_iter()
-        .map(|m| m.name)
-        .collect())
+    Ok(parsed.models.into_iter().map(|m| m.name).collect())
 }
 
 async fn ollama_chat(cfg: &AiConfig, model: &str, messages: &[ChatMessage]) -> Result<String> {
-    let url = format!(
-        "{}/api/chat",
-        cfg.ollama_host.trim_end_matches('/')
-    );
+    let url = format!("{}/api/chat", cfg.ollama_host.trim_end_matches('/'));
     let client = http_client(cfg.timeout_secs)?;
     let body = OllamaChatRequest {
         model: model.to_string(),
@@ -164,7 +155,7 @@ async fn ollama_chat(cfg: &AiConfig, model: &str, messages: &[ChatMessage]) -> R
         .json(&body)
         .send()
         .await
-        .map_err(|e| ollama_hint(e))?;
+        .map_err(ollama_hint)?;
 
     if !resp.status().is_success() {
         let status = resp.status();
@@ -189,11 +180,13 @@ async fn ollama_chat(cfg: &AiConfig, model: &str, messages: &[ChatMessage]) -> R
 }
 
 async fn groq_chat(cfg: &AiConfig, messages: &[ChatMessage]) -> Result<String> {
-    let key = cfg.groq_api_key.as_deref().filter(|k| !k.is_empty()).ok_or_else(|| {
-        Error::Other(
-            "Groq requires GROQ_API_KEY (free at https://console.groq.com)".into(),
-        )
-    })?;
+    let key = cfg
+        .groq_api_key
+        .as_deref()
+        .filter(|k| !k.is_empty())
+        .ok_or_else(|| {
+            Error::Other("Groq requires GROQ_API_KEY (free at https://console.groq.com)".into())
+        })?;
 
     let client = http_client(cfg.timeout_secs)?;
     let body = OpenAiChatRequest {
