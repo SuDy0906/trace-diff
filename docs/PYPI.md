@@ -3,12 +3,12 @@
 Install the prebuilt CLI without Rust:
 
 ```bash
-pip install trace-diff
+pip install trace-test
 trace-diff --help
 trace-diff run https://example.com --skip-trace --headless
 ```
 
-Wheels ship the native `trace-diff` binary onto your `PATH` (inside the active Python environment).
+Wheels ship the native `trace-diff` binary onto your `PATH` (inside the active Python environment). The PyPI distribution name is **`trace-test`**; the CLI command remains **`trace-diff`**.
 
 ## Platform wheels
 

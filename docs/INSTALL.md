@@ -3,7 +3,7 @@
 ## pip (all platforms)
 
 ```bash
-pip install trace-diff
+pip install trace-test
 trace-diff --help
 trace-diff run https://example.com --skip-trace --headless
 ```
