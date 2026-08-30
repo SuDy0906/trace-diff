@@ -555,17 +555,13 @@ fn handle_select(app: &mut App, code: KeyCode) -> Result<bool> {
             }
         }
         KeyCode::Char('a') => {
-            for s in &mut app.selected {
-                *s = true;
-            }
+            app.selected.fill(true);
         }
         KeyCode::Char('c') => {
             open_auth_popup(app);
         }
         KeyCode::Char('n') => {
-            for s in &mut app.selected {
-                *s = false;
-            }
+            app.selected.fill(false);
         }
         KeyCode::Char('d') | KeyCode::Char('i') => {
             app.inspect_open = true;
