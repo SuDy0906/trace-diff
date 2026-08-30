@@ -1,0 +1,91 @@
+name: pypi
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-wheels:
+    name: wheel (${{ matrix.os }}-${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-13
+            target: x86_64-apple-darwin
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            manylinux: "2_28"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install maturin
+        run: pip install "maturin>=1.7,<2"
+
+      - name: Build wheel (Linux manylinux)
+        if: matrix.manylinux != ''
+        run: maturin build --release --out dist --target ${{ matrix.target }} --manylinux ${{ matrix.manylinux }} -b bin
+
+      - name: Build wheel
+        if: matrix.manylinux == ''
+        run: maturin build --release --out dist --target ${{ matrix.target }} -b bin
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.os }}-${{ matrix.target }}
+          path: dist/*.whl
+
+  smoke-test-windows:
+    needs: build-wheels
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-windows-*
+          merge-multiple: true
+          path: dist
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install wheel
+        shell: pwsh
+        run: pip install (Get-ChildItem dist/*.whl | Select-Object -First 1)
+      - name: Smoke test
+        run: |
+          trace-diff --help
+          trace-diff run https://example.com --skip-trace --headless
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-wheels, smoke-test-windows]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          merge-multiple: true
+          path: dist
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: upload
+          args: --skip-existing dist/*.whl
