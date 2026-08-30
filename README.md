@@ -6,14 +6,19 @@ Interactive, terminal-native diagnostic CLI: Layer 3/4 hop-by-hop route tracing 
 
 ### pip (recommended)
 
+Requires Python 3.9+. No Rust toolchain needed.
+
 ```bash
 pip install trace-route-test
+trace-diff --help
 trace-diff run https://example.com --skip-trace --headless
+trace-diff features https://api.example.com
 ```
 
-See [PyPI distribution](docs/PYPI.md) for platform wheels and publish notes.
+Package on PyPI: **`trace-route-test`** → CLI: **`trace-diff`**.  
+Install guide: [docs/INSTALL.md](docs/INSTALL.md) · [PyPI details](docs/PYPI.md)
 
-### From source (Rust)
+### From source (developers)
 
 ```bash
 cargo build --release
@@ -59,13 +64,15 @@ cargo run -- -v run https://example.com --skip-trace --output text
 
 ## Permissions
 
+After `pip install trace-route-test`, use the `trace-diff` command (see [INSTALL.md](docs/INSTALL.md)).
+
 | Platform | Notes |
 |---|---|
-| Linux | `sudo setcap cap_net_raw+ep ./target/release/trace-diff` |
-| macOS | May require `sudo` for raw ICMP |
-| Windows | Run elevated (Administrator) for ICMP traceroute |
+| Linux | `sudo setcap cap_net_raw+ep $(which trace-diff)` for traceroute without root |
+| macOS | May require `sudo trace-diff ...` for raw ICMP |
+| Windows | Run terminal **as Administrator** for ICMP traceroute |
 
-L7 HTTP probing works without elevated privileges.
+L7 HTTP probing works without elevated privileges (`--skip-trace`).
 
 ## Commands
 

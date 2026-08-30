@@ -1,6 +1,6 @@
 # PyPI (pip) distribution
 
-Install the prebuilt CLI without Rust:
+Install the prebuilt CLI — **no Rust or cargo required**:
 
 ```bash
 pip install trace-route-test
@@ -8,7 +8,38 @@ trace-diff --help
 trace-diff run https://example.com --skip-trace --headless
 ```
 
-Wheels ship the native `trace-diff` binary onto your `PATH` (inside the active Python environment). The PyPI distribution name is **`trace-route-test`**; the CLI command remains **`trace-diff`**.
+| | |
+|---|---|
+| **PyPI package** | `trace-route-test` |
+| **CLI command** | `trace-diff` |
+| **Current version** | see [pypi.org/project/trace-route-test](https://pypi.org/project/trace-route-test/) |
+
+Wheels ship the native `trace-diff` binary onto your `PATH` inside the active Python environment (venv, conda, or user site-packages).
+
+## Install options
+
+```bash
+# Default
+pip install trace-route-test
+
+# Upgrade
+pip install --upgrade trace-route-test
+
+# User install (no venv)
+pip install --user trace-route-test
+
+# Specific version
+pip install trace-route-test==0.1.0
+```
+
+Use a virtual environment when you can:
+
+```bash
+python -m venv .venv
+# Windows: .venv\Scripts\activate
+# macOS/Linux: source .venv/bin/activate
+pip install trace-route-test
+```
 
 ## Platform wheels
 
@@ -21,9 +52,9 @@ CI publishes wheels for:
 | macOS | Intel (x86_64) |
 | Linux | x86_64 (manylinux 2_28) |
 
-`pip` selects the matching wheel automatically.
+`pip` selects the matching wheel automatically. If no wheel matches your platform, `pip` will not fall back to building from source (this package ships binaries only).
 
-## Privileges (same as cargo install)
+## Privileges
 
 | Platform | L3/L4 traceroute | L7 HTTP (`--skip-trace`) |
 |----------|------------------|---------------------------|
@@ -31,19 +62,23 @@ CI publishes wheels for:
 | macOS | often `sudo` | works |
 | Linux | `setcap` or `sudo` | works |
 
-## Build a wheel locally
+See [INSTALL.md](INSTALL.md) for per-platform examples using the pip-installed `trace-diff` command.
+
+## Common commands (after pip install)
+
+```bash
+trace-diff run https://example.com --skip-trace --headless
+trace-diff features https://api.example.com
+trace-diff diff staging https://example.com --output json
+trace-diff list
+```
+
+## Build a wheel locally (maintainers)
 
 ```bash
 pip install maturin
 maturin build --release -b bin --out dist
 pip install dist/*.whl   # or dist\*.whl on Windows
-```
-
-Cross-target example:
-
-```bash
-rustup target add x86_64-pc-windows-msvc
-maturin build --release -b bin --target x86_64-pc-windows-msvc --out dist
 ```
 
 ## Publish (maintainers)

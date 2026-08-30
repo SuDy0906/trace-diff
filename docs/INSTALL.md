@@ -1,100 +1,94 @@
 # Install guides (Windows / macOS / Linux)
 
-## pip (all platforms)
+## pip (recommended)
+
+No Rust toolchain required. Install into your active Python environment (system Python, venv, or conda):
 
 ```bash
 pip install trace-route-test
 trace-diff --help
+```
+
+PyPI package name: **`trace-route-test`**. CLI command: **`trace-diff`**.
+
+Upgrade or reinstall:
+
+```bash
+pip install --upgrade trace-route-test
+```
+
+### Quick smoke test (no admin)
+
+Works on all platforms — HTTP only, skips L3/L4 traceroute:
+
+```bash
 trace-diff run https://example.com --skip-trace --headless
 ```
 
-Details: [PYPI.md](PYPI.md)
+### Features TUI (OpenAPI workflows)
+
+```bash
+trace-diff features https://api.example.com
+```
+
+Set auth via env vars or `--auth-file` (see [FEATURES_AUTODETECT.md](FEATURES_AUTODETECT.md)).
 
 ---
 
-## Prerequisites (build from source)
+## Platform notes (pip install)
 
-- Rust 1.75+ (`rustup`) for building from source  
-- Network access to the target under test  
-- **Optional elevated privileges** for L3/L4 traceroute (ICMP). L7 HTTP probing works without elevation.
+After `pip install`, `trace-diff` is on your `PATH` inside that Python environment.
 
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-# Windows: winget install Rustlang.Rustup
-```
+| Platform | Where the binary lives | L7 HTTP (`--skip-trace`) | L3/L4 traceroute |
+|----------|------------------------|---------------------------|------------------|
+| **Windows** | `<venv>\Scripts\trace-diff.exe` or Python `Scripts\` | Works without Admin | Run terminal **as Administrator** |
+| **macOS** | `<venv>/bin/trace-diff` | Works | Often needs `sudo trace-diff ...` |
+| **Linux** | `<venv>/bin/trace-diff` | Works | `sudo` or `setcap cap_net_raw+ep $(which trace-diff)` |
 
-Ensure Cargo is on `PATH`:
+### Windows
 
 ```powershell
-# Windows PowerShell (current session)
-$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install trace-route-test
+
+# L7 only
+trace-diff run https://example.com --skip-trace --headless
+
+# Full traceroute — open PowerShell as Administrator first
+trace-diff run https://example.com
 ```
+
+### macOS
 
 ```bash
-# macOS / Linux
-source "$HOME/.cargo/env"
+python3 -m venv .venv
+source .venv/bin/activate
+pip install trace-route-test
+
+trace-diff run https://example.com --skip-trace --headless
+
+# ICMP may require sudo
+sudo trace-diff run 1.1.1.1 --skip-http --output text
 ```
 
----
+Wheels are published for Apple Silicon (arm64) and Intel (x86_64); `pip` picks the match.
 
-## Build from source
+### Linux
 
 ```bash
-git clone <your-repo-url> trace-diff
-cd trace-diff
-cargo build --release
+python3 -m venv .venv
+source .venv/bin/activate
+pip install trace-route-test
+
+trace-diff run https://example.com --skip-trace --headless
+
+# Optional: grant raw ICMP without sudo (path from `which trace-diff`)
+sudo setcap cap_net_raw+ep "$(which trace-diff)"
+trace-diff run 1.1.1.1 --skip-http --output text
 ```
 
-Binary path:
-
-- Windows: `.\target\release\trace-diff.exe`
-- macOS / Linux: `./target/release/trace-diff`
-
----
-
-## Windows
-
-1. Install [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) (C++ workload) if `rustc` asks for a linker.
-2. Build as above.
-3. **L7 only (no Admin):**
-   ```powershell
-   .\target\release\trace-diff.exe run https://example.com --skip-trace --output text
-   ```
-4. **Full traceroute:** open PowerShell **as Administrator**, then omit `--skip-trace`.
-5. Optional install location: copy the exe to a folder on `PATH`, or publish via Scoop/winget later.
-
----
-
-## macOS
-
-```bash
-cargo build --release
-./target/release/trace-diff run https://example.com --skip-trace --output text
-```
-
-ICMP traceroute may require `sudo`:
-
-```bash
-sudo ./target/release/trace-diff run 1.1.1.1 --skip-http --output text
-```
-
-Apple Silicon and Intel both work via `rustup` targets `aarch64-apple-darwin` / `x86_64-apple-darwin`.
-
----
-
-## Linux
-
-```bash
-cargo build --release
-./target/release/trace-diff run https://example.com --skip-trace --output text
-```
-
-Prefer capability instead of full root for traceroute:
-
-```bash
-sudo setcap cap_net_raw+ep ./target/release/trace-diff
-./target/release/trace-diff run 1.1.1.1 --skip-http --output text
-```
+Requires a **manylinux**-compatible x86_64 glibc system (wheels target manylinux 2_28).
 
 ---
 
@@ -105,4 +99,43 @@ trace-diff --help
 trace-diff run https://example.com --skip-trace --headless -v
 ```
 
-`-v` / `--debug` write probe traces to stderr. `NO_COLOR=1` or `--no-color` disables ANSI colors.
+`-v` / `--debug` writes probe traces to stderr. `NO_COLOR=1` or `--no-color` disables ANSI colors.
+
+More pip details: [PYPI.md](PYPI.md).
+
+---
+
+## Build from source (developers)
+
+Only needed if you are hacking on the Rust codebase or building wheels locally.
+
+### Prerequisites
+
+- Rust 1.75+ (`rustup`)
+- Network access to targets under test
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+# Windows: winget install Rustlang.Rustup
+```
+
+### Clone and build
+
+```bash
+git clone https://github.com/SuDy0906/trace-diff.git
+cd trace-diff
+cargo build --release
+```
+
+Binary paths:
+
+- Windows: `.\target\release\trace-diff.exe`
+- macOS / Linux: `./target/release/trace-diff`
+
+Or build a local wheel:
+
+```bash
+pip install maturin
+maturin build --release -b bin --out dist
+pip install dist/*.whl   # Windows: dist\*.whl
+```
