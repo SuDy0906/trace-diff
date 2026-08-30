@@ -1,0 +1,81 @@
+---
+source: tests/json_snapshots.rs
+expression: json
+---
+{
+  "run": {
+    "created_at": "1970-01-01T00:00:00Z",
+    "id": "00000000-0000-0000-0000-000000000001",
+    "l7": {
+      "bytes_read": 1256,
+      "dns_ms": 12.5,
+      "measured_at": "1970-01-01T00:00:00Z",
+      "resolved_ip": "93.184.216.34",
+      "status": 200,
+      "tcp_ms": 18.0,
+      "tls_ms": 32.25,
+      "total_ms": 146.75,
+      "transfer_ms": 4.0,
+      "ttfb_ms": 80.0,
+      "url": "https://example.com/"
+    },
+    "meta": {
+      "arch": "x86_64",
+      "os": "linux",
+      "privileges": "unprivileged",
+      "probe_mode": "l7_only",
+      "rustc_host": "x86_64-linux",
+      "skip_http": false,
+      "skip_trace": true,
+      "timing_basis": "std::time::Instant (monotonic)",
+      "timing_disclaimer": "test-disclaimer",
+      "tool_version": "0.1.0"
+    },
+    "reached": true,
+    "resolved_ip": "93.184.216.34",
+    "target": "https://example.com",
+    "trace": {
+      "dest_port": 443,
+      "hops": [
+        {
+          "address": "10.0.0.1",
+          "metrics": {
+            "avg_ms": 11.0,
+            "jitter_ms": 0.1796875,
+            "loss_pct": 0.0,
+            "max_ms": 12.0,
+            "min_ms": 10.0,
+            "p50_ms": 11.0,
+            "p95_ms": 11.9,
+            "recv": 3,
+            "sent": 3
+          },
+          "protos_seen": [
+            "icmp"
+          ],
+          "reply_proto": "icmp",
+          "samples_ms": [
+            10.0,
+            12.0,
+            11.0
+          ],
+          "ttl": 1
+        }
+      ],
+      "probe_kind": "auto",
+      "reached": true,
+      "resolved": "93.184.216.34",
+      "summary": {
+        "first_reply_ttl": null,
+        "gaps": [],
+        "hop_count": 0,
+        "last_reply_ttl": null,
+        "protocols_used": [],
+        "raw_icmp_ok": false,
+        "replied": 0,
+        "silent": 0
+      },
+      "target": "https://example.com"
+    }
+  }
+}

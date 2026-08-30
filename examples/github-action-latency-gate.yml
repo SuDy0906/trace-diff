@@ -1,0 +1,56 @@
+# Example: use trace-diff as a CI latency gate in your own repo
+#
+# Copy into .github/workflows/trace-diff.yml and adjust the URL / thresholds.
+
+name: api-latency-gate
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: YOUR_ORG/trace-diff
+          path: trace-diff
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build trace-diff
+        working-directory: trace-diff
+        run: cargo build --release
+
+      - name: Probe + baseline + threshold
+        working-directory: trace-diff
+        env:
+          TRACE_DIFF_DB: ${{ github.workspace }}/latency.db
+        run: |
+          ./target/release/trace-diff run https://api.example.com \
+            --skip-trace \
+            --headless \
+            --save-baseline staging \
+            --fail-if-ttfb-exceeds 250ms \
+            --db "$TRACE_DIFF_DB"
+
+      - name: Diff vs baseline
+        working-directory: trace-diff
+        env:
+          TRACE_DIFF_DB: ${{ github.workspace }}/latency.db
+        run: |
+          ./target/release/trace-diff diff staging https://api.example.com \
+            --skip-trace \
+            --headless \
+            --db "$TRACE_DIFF_DB"
+
+      - name: Upload JSON artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: latency-db
+          path: latency.db
