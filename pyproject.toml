@@ -3,7 +3,7 @@ requires = ["maturin>=1.7,<2"]
 build-backend = "maturin"
 
 [project]
-name = "trace-test"
+name = "trace-route-test"
 dynamic = ["version"]
 description = "L3/L4 traceroute + L7 HTTP diagnostics CLI — trace routes and test API endpoints"
 readme = "README.md"

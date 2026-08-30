@@ -7,7 +7,7 @@ Interactive, terminal-native diagnostic CLI: Layer 3/4 hop-by-hop route tracing 
 ### pip (recommended)
 
 ```bash
-pip install trace-test
+pip install trace-route-test
 trace-diff run https://example.com --skip-trace --headless
 ```
 
