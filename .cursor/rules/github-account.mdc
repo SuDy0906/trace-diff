@@ -1,0 +1,20 @@
+---
+description: Use SuDy0906 GitHub account for all git/gh operations in this repo
+alwaysApply: true
+---
+
+# GitHub account (this repo)
+
+Repository: `https://github.com/SuDy0906/trace-diff`
+
+For **every** git push, pull, tag, and `gh` command in this workspace:
+
+1. Use GitHub account **`SuDy0906`** (not `Suryadeep091` or other logged-in accounts).
+2. Before push/pull, if unsure which account is active:
+   ```powershell
+   gh auth switch --user SuDy0906
+   gh auth setup-git
+   ```
+3. Remote is `origin` → `https://github.com/SuDy0906/trace-diff.git` — do not change without user request.
+
+PyPI publishes on `v*` tags via `.github/workflows/pypi.yml` (trusted publisher for `SuDy0906/trace-diff`).
