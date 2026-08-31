@@ -17,6 +17,14 @@ Default provider is **`auto`**: use Groq when `GROQ_API_KEY` is set, else Ollama
 trace-diff features --check-llm
 ```
 
+For setup scripts and CI (JSON on stdout):
+
+```bash
+trace-diff features --check-llm --json
+```
+
+Example JSON fields: `ready`, `resolved_provider`, `groq_key_set`, `ollama_reachable`, `model`, `status`.
+
 Example when ready (Groq):
 
 ```text

@@ -11,10 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Production packaging: LICENSE, CHANGELOG, PyPI metadata URLs, GitHub issue templates
 - CI: strict diff gate, `cargo audit`, PR wheel build validation, multi-platform wheel smoke tests
-- Docs: [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md), [CI.md](docs/CI.md)
-- Features TUI: `?` help, `g` guide, `e` JSON export, non-TTY text fallback
-- Integration test: `features -y` against wiremock OpenAPI fixture
-- README and PyPI docs expanded with `features` command details
+- Docs: [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md), [CI.md](docs/CI.md), [V1_CHECKLIST.md](docs/V1_CHECKLIST.md)
+- Features TUI: live discovery stages, `l` LLM panel, `R` rediscover, `?`/`g` help, `e` export, confirm-quit on probe run
+- `--check-llm --json` for pip/CI setup verification
+- Non-TTY stdout auto headless for `features`
+- Integration tests: wiremock OpenAPI, CLI baseline/diff, CI gate unit tests
+- README and PyPI docs: equal coverage for `run`/`diff` and `features`
 
 ### Changed
 

@@ -51,8 +51,10 @@ Skip LLM in CI (`--no-llm`) — heuristics are deterministic and need no API key
 Verify LLM provider setup (optional job):
 
 ```yaml
-- run: trace-diff features --check-llm
+- run: trace-diff features --check-llm --json
 ```
+
+Parse `ready` in the JSON to gate later jobs.
 
 ## GitHub Actions example
 

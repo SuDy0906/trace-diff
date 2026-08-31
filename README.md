@@ -47,6 +47,7 @@ Point at an API host with a published OpenAPI spec. `trace-diff` discovers **wor
 ```bash
 trace-diff features https://api.example.com
 trace-diff features --check-llm                    # verify optional LLM provider
+trace-diff features --check-llm --json             # same, machine-readable (CI/setup scripts)
 trace-diff features https://api.example.com -y --json   # headless CI run
 ```
 
@@ -91,15 +92,32 @@ cargo run -- -v run https://example.com --skip-trace --output text
 
 ### TUI keys (`features`)
 
+**Select screen**
+
 | Key | Action |
 |---|---|
-| ↑↓ / Space | Move and toggle features |
-| Enter | Run selected features |
-| `d` / `i` | Inspect workflow steps |
-| `c` | Edit auth credentials |
-| `a` / `n` | Select all / none |
-| `R` | Categorized run report (after run) |
-| `q` / Esc | Quit |
+| ↑↓ / j k | Move cursor |
+| Space | Toggle feature |
+| a / n | Select all / none |
+| Enter / r | Run selected |
+| c | Auth credentials popup |
+| d / i | Inspect workflow steps |
+| l | LLM status panel |
+| R | Rediscover (retry OpenAPI pipeline) |
+| ? | Help overlay |
+| g | Quick guide |
+| t | Cycle theme |
+| q / Esc | Quit |
+
+**During discovery:** live stage updates (Fetching OpenAPI…, Building heuristics…); `q` cancels.
+
+**During probe run:** press `q` twice to confirm abort.
+
+**Results screen:** `R` categorized report · `e` export JSON · `b` back to select.
+
+**Auth popup:** shows which env vars are set (names only); Esc twice to skip without saving.
+
+Non-interactive stdout (pipes/CI) auto-runs headless — same as `-y`.
 
 `--no-color` / `NO_COLOR` disables colors; `--theme ocean|amber|mono` selects a palette.
 
@@ -145,5 +163,6 @@ L7 HTTP probing works without elevated privileges (`--skip-trace`).
 - `features <url> -y` — headless auto-run (CI)
 - `features <url> -y --json` — JSON report to stdout
 - `features --check-llm` — print LLM provider status (Groq/Ollama)
+- `features --check-llm --json` — JSON status for setup scripts / CI
 - `features <url> --auth-file auth.json` — multi-realm credentials
 - `features <url> --no-llm` — skip workflow pipeline (flat endpoint list)

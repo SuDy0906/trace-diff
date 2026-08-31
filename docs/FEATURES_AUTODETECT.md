@@ -6,6 +6,7 @@ Auto-detect pages, **API workflow scenarios**, and common paths from a site. Sam
 trace-diff features https://api.confuciusai.io
 trace-diff features https://api.confuciusai.io --no-llm   # skip workflow pipeline
 trace-diff features --check-llm                         # verify LLM provider setup
+trace-diff features --check-llm --json                  # machine-readable status
 trace-diff features https://api.confuciusai.io --manifest .trace-diff/workflows-api-confuciusai-io.json
 ```
 
@@ -24,9 +25,31 @@ Discovery uses a **robust pipeline** — not naive string matching:
 5. **LLM refine** (background, max ~20s when Ollama/Groq available) — improves ordering and grouping; falls back to validated heuristics on timeout.
 6. Saves manifest to `.trace-diff/workflows-<host>.json` (`manifest_version: 5`).
 7. Inserts a **TLS certificate canary** for HTTPS hosts (handshake + days until expiry).
-8. TUI shows **FLOW** / **WRITE** / **TLS** rows with step detail panel on highlight.
+8. TUI shows **FLOW** / **WRITE** / **TLS** rows with step detail panel on highlight. Discovery shows live stages (Fetching OpenAPI…, Building heuristics…, LLM refine…). Press **`R`** to rediscover, **`l`** for LLM status.
 
 No chat UI. When LLM is unavailable, the TUI status line shows **heuristics only** and stderr prints a setup hint. See [LLM_SETUP.md](LLM_SETUP.md).
+
+## TUI keyboard (pip / terminal)
+
+| Screen | Key | Action |
+|--------|-----|--------|
+| Select | ↑↓ / j k, Space | Move, toggle feature |
+| Select | Enter / r | Run selected |
+| Select | a / n | Select all / none |
+| Select | c | Auth popup (auto-opens if creds missing) |
+| Select | d / i / Enter | Inspect steps |
+| Select | l | LLM status panel |
+| Select | R | Rediscover |
+| Select | ? / g | Help / guide |
+| Select | t | Cycle theme |
+| Discovery | q | Cancel |
+| Running | q ×2 | Confirm abort |
+| Results | R | Categorized report |
+| Results | e | Export JSON |
+| Results | b | Back to select |
+| Auth popup | Esc ×2 | Skip without saving |
+
+Piped or non-TTY stdout runs headless automatically (equivalent to `-y`).
 
 ## Multi-role auth (user / annotator / admin)
 
@@ -49,7 +72,8 @@ When discovery finds multiple realms and any realm is missing credentials, a **p
 - Tab / ↑↓ — move between fields (j/k only on realm toggles, not while typing)
 - Space — toggle realm on/off (unchecked realms deselect their FLOWs on save)
 - Enter — save and continue
-- Esc — skip (keep env/file creds only)
+- Esc ×2 — skip without saving (keep env/file creds only)
+- Env vars already set are shown by name (e.g. `Env set: TRACE_DIFF_EMAIL`) — values never displayed
 
 Leave a realm blank to skip it — those FLOWs stay **Reachable** (yellow) or are deselected if the realm checkbox is off.
 
@@ -109,7 +133,7 @@ Headless run fails the process on **Failed** rows. Optional gates:
 
 | Flag | Effect |
 |------|--------|
-| `--yes-all` / `-y` | Skip TUI; run selected features |
+| `--yes-all` / `-y` | Skip TUI; run selected features (also auto when stdout is not a TTY) |
 | `--manifest PATH` | Load workflow JSON (version 4 or 5) or a flat endpoint list |
 | `--fail-on-reachable` | Also fail yellow auth/body rows |
 | `--fail-if-ttfb-exceeds 250ms` | Fail if any selected probe TTFB exceeds the limit |
@@ -149,6 +173,7 @@ trace-diff features https://api.confuciusai.io
 | Flag / env | Default | Purpose |
 |------------|---------|---------|
 | `--check-llm` | off | Print provider status and exit |
+| `--check-llm --json` | off | JSON provider status (CI / setup scripts) |
 | `--no-llm` | off | Skip workflow pipeline (flat endpoint list) |
 | `TRACE_DIFF_AI_PROVIDER` | `auto` | `auto`, `groq`, or `ollama` (`auto` prefers Groq key, then Ollama) |
 | `GROQ_API_KEY` | — | Groq API key (recommended) |

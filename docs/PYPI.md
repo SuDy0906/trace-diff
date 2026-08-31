@@ -103,8 +103,14 @@ trace-diff features https://api.example.com
 # Verify optional LLM setup (Groq/Ollama)
 trace-diff features --check-llm
 
+# Machine-readable LLM check (setup scripts / CI)
+trace-diff features --check-llm --json
+
 # Headless CI — JSON report, non-zero exit on failures
 trace-diff features https://api.example.com -y --json
+
+# Non-TTY stdout (pipes) auto-runs headless — same as -y
+trace-diff features https://api.example.com --json | jq .passed
 
 # With credentials (multi-realm: user / annotator / admin)
 trace-diff features https://api.example.com --auth-file auth.json
@@ -125,7 +131,27 @@ trace-diff features https://api.example.com -y \
 
 Yellow **Reachable** means the route exists but needs auth or body. Set `TRACE_DIFF_EMAIL` / `TRACE_DIFF_PASSWORD` (or `--auth-file`) to turn flows green.
 
-Docs: [FEATURES_AUTODETECT.md](FEATURES_AUTODETECT.md) · [FEATURES.md](FEATURES.md)
+### Interactive TUI keys
+
+| Screen | Key | Action |
+|--------|-----|--------|
+| Select | ↑↓ j/k, Space | Move, toggle |
+| Select | Enter / r | Run selected |
+| Select | a / n | All / none |
+| Select | c | Auth popup |
+| Select | d / i | Step inspect |
+| Select | l | LLM status panel |
+| Select | R | Rediscover |
+| Select | ? / g | Help / guide |
+| Discovery | (live) | Stage updates: Fetching OpenAPI…, Building heuristics…, LLM refine… |
+| Running | q ×2 | Confirm abort |
+| Results | R | Categorized report |
+| Results | e | Export JSON to `.trace-diff/` |
+| Any | t | Cycle theme |
+
+`NO_COLOR=1` or `--no-color` uses text labels (`OK` / `REACH` / `FAIL`) instead of color-only glyphs.
+
+Docs: [FEATURES_AUTODETECT.md](FEATURES_AUTODETECT.md) · [FEATURES.md](FEATURES.md) · [CI.md](CI.md)
 
 ## Optional LLM (smarter API workflows)
 
@@ -134,6 +160,7 @@ Heuristic workflows work without any setup. For optional LLM refine (better grou
 ```bash
 export GROQ_API_KEY="gsk_..."   # free at https://console.groq.com
 trace-diff features --check-llm
+trace-diff features --check-llm --json   # for setup scripts
 trace-diff features https://api.example.com
 ```
 

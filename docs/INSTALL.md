@@ -31,6 +31,20 @@ trace-diff run https://example.com --skip-trace --headless
 trace-diff features https://api.example.com
 ```
 
+Headless / CI (or when stdout is not a TTY):
+
+```bash
+trace-diff features https://api.example.com -y --json
+trace-diff features https://api.example.com -y --no-llm --fail-on-reachable
+```
+
+Verify LLM setup after install:
+
+```bash
+trace-diff features --check-llm
+trace-diff features --check-llm --json
+```
+
 Set auth via env vars or `--auth-file` (see [FEATURES_AUTODETECT.md](FEATURES_AUTODETECT.md)).
 
 ### Optional: smarter workflows (LLM)
@@ -40,6 +54,7 @@ Heuristic workflows work without any setup. To enable optional LLM refine (Groq 
 ```bash
 export GROQ_API_KEY="gsk_..."   # free at https://console.groq.com
 trace-diff features --check-llm
+trace-diff features --check-llm --json   # machine-readable for CI/setup scripts
 trace-diff features https://api.example.com
 ```
 
