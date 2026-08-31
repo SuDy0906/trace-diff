@@ -99,4 +99,20 @@ impl Theme {
             self
         }
     }
+
+    /// Journey / timing heat color (respects mono / NO_COLOR).
+    pub fn stage_heat_color(&self, ms: f64) -> Color {
+        if !self.use_color {
+            return self.muted;
+        }
+        if ms < 50.0 {
+            Color::Green
+        } else if ms < 150.0 {
+            Color::Cyan
+        } else if ms < 400.0 {
+            Color::Yellow
+        } else {
+            Color::Red
+        }
+    }
 }

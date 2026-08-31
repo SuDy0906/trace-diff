@@ -1,11 +1,12 @@
 //! `trace-diff features` — auto-detect site features and run interactive checks.
 
-use crate::ai::{print_llm_check, resolve_ai_config, AiResolution};
+use crate::ai::{print_llm_check, print_llm_check_json, resolve_ai_config, AiResolution};
 use crate::cli::run::UiOpts;
 use crate::cli::FeaturesArgs;
 use crate::error::Result;
 use crate::features::{
-    self, AuthProfile, DiscoverOptions, FeatureKind, FeatureResult, ProbeSettings, ProbeVerdict,
+    self, AuthProfile, DiscoverOptions, FeatureKind, FeatureResult, FeatureRunReport,
+    ProbeSettings, ProbeVerdict,
 };
 use std::time::Duration;
 
@@ -13,7 +14,11 @@ pub async fn execute(args: FeaturesArgs, ui: UiOpts) -> Result<()> {
     let resolution = resolve_ai_resolution(&args).await?;
 
     if args.check_llm {
-        print_llm_check(&resolution);
+        if args.json {
+            print_llm_check_json(&resolution)?;
+        } else {
+            print_llm_check(&resolution);
+        }
         return Ok(());
     }
 
@@ -26,35 +31,60 @@ pub async fn execute(args: FeaturesArgs, ui: UiOpts) -> Result<()> {
     let discover = build_discover_options(&args, resolution).await?;
     let settings = build_probe_settings(&args, timeout)?;
 
-    if args.yes_all {
-        let outcome = features::discover_features(target, discover).await?;
-        print_llm_hint(&outcome.llm);
-        let chosen = select_ci_features(&outcome.features, &args);
-        let report = features::run_selected(target, &chosen, &settings).await?;
-        if args.json {
-            println!("{}", serde_json::to_string_pretty(&report)?);
-        } else {
-            println!(
-                "Feature run: {}/{} passed (of {} selected)\n",
-                report.passed, report.selected, report.selected
-            );
-            for r in &report.results {
-                let mark = match r.verdict {
-                    ProbeVerdict::Healthy => "PASS",
-                    ProbeVerdict::Reachable => "REACH",
-                    ProbeVerdict::Failed => "FAIL",
-                };
-                println!(
-                    "  [{mark}] {:<22} {:>7.0} ms  {:<24} {}",
-                    r.feature.label, r.total_ms, r.message, r.feature.url
-                );
-            }
-        }
-        ci_gate(&report.results, &args)?;
-        return Ok(());
+    let headless = args.yes_all || !std::io::IsTerminal::is_terminal(&std::io::stdout());
+    if headless {
+        return run_headless(target, discover, &settings, &args).await;
     }
 
     features::run_features_interactive(target, ui.theme, settings, discover).await
+}
+
+async fn run_headless(
+    target: &str,
+    discover: DiscoverOptions<'_>,
+    settings: &ProbeSettings,
+    args: &FeaturesArgs,
+) -> Result<()> {
+    let outcome = features::discover_features(target, discover).await?;
+    print_llm_hint(&outcome.llm);
+    if outcome.features.is_empty() {
+        return Err(crate::error::Error::Other(
+            "no features discovered — check URL or OpenAPI availability".into(),
+        ));
+    }
+    let chosen = select_ci_features(&outcome.features, args);
+    if chosen.is_empty() {
+        return Err(crate::error::Error::Other(
+            "no features selected after filters — try --include-writes or --manifest".into(),
+        ));
+    }
+    let report = features::run_selected(target, &chosen, settings).await?;
+    print_headless_report(&report, args.json);
+    ci_gate(&report.results, args)
+}
+
+fn print_headless_report(report: &FeatureRunReport, json: bool) {
+    if json {
+        if let Ok(text) = serde_json::to_string_pretty(report) {
+            println!("{text}");
+        }
+        return;
+    }
+    println!(
+        "Feature run: {}/{} passed (discovered {})\n",
+        report.passed, report.selected, report.discovered
+    );
+    for r in &report.results {
+        let mark = match r.verdict {
+            ProbeVerdict::Healthy => "PASS",
+            ProbeVerdict::Reachable => "REACH",
+            ProbeVerdict::Failed => "FAIL",
+        };
+        println!(
+            "  [{mark}] {:<22} {:>7.0} ms  {:<24} {}",
+            r.feature.label, r.total_ms, r.message, r.feature.url
+        );
+    }
 }
 
 async fn resolve_ai_resolution(args: &FeaturesArgs) -> Result<AiResolution> {
@@ -186,5 +216,92 @@ async fn build_discover_options(
         },
         infer_workflows,
         skip_tls_canary: args.no_tls_canary,
+        on_progress: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::features::{DetectedFeature, FeatureKind, FeatureResult, ProbeVerdict};
+
+    fn stub_result(verdict: ProbeVerdict, ttfb_ms: Option<f64>) -> FeatureResult {
+        FeatureResult {
+            feature: DetectedFeature {
+                id: "health".into(),
+                label: "health".into(),
+                url: "https://example.com/health".into(),
+                kind: FeatureKind::Api,
+                source: "test".into(),
+                method: None,
+                workflow: None,
+            },
+            ok: verdict != ProbeVerdict::Failed,
+            verdict,
+            status: Some(200),
+            total_ms: 50.0,
+            ttfb_ms,
+            message: "ok".into(),
+            l7: None,
+            steps: vec![],
+        }
+    }
+
+    fn gate_args(fail_on_reachable: bool, ttfb_limit: Option<Duration>) -> FeaturesArgs {
+        FeaturesArgs {
+            target: Some("https://example.com".into()),
+            yes_all: true,
+            json: false,
+            max_features: None,
+            timeout: None,
+            manifest: None,
+            bearer_token: None,
+            email: None,
+            password: None,
+            auth_file: None,
+            include_writes: false,
+            fail_on_reachable,
+            fail_if_ttfb_exceeds: ttfb_limit,
+            cert_warn_days: 21,
+            no_tls_canary: true,
+            no_llm: true,
+            check_llm: false,
+            llm_provider: "auto".into(),
+            llm_model: None,
+            ollama_host: "http://localhost:11434".into(),
+            groq_api_key: None,
+            llm_timeout_secs: 30,
+        }
+    }
+
+    #[test]
+    fn ci_gate_fails_on_failed_probe() {
+        let results = vec![stub_result(ProbeVerdict::Failed, None)];
+        let err = ci_gate(&results, &gate_args(false, None)).unwrap_err();
+        assert!(err.to_string().contains("failed"));
+    }
+
+    #[test]
+    fn ci_gate_fails_on_reachable_when_flag_set() {
+        let results = vec![stub_result(ProbeVerdict::Reachable, None)];
+        let err = ci_gate(&results, &gate_args(true, None)).unwrap_err();
+        assert!(err.to_string().contains("reachable"));
+    }
+
+    #[test]
+    fn ci_gate_fails_on_slow_ttfb() {
+        let results = vec![stub_result(ProbeVerdict::Healthy, Some(500.0))];
+        let err = ci_gate(
+            &results,
+            &gate_args(false, Some(Duration::from_millis(100))),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("TTFB exceeded"));
+    }
+
+    #[test]
+    fn ci_gate_passes_healthy_probes() {
+        let results = vec![stub_result(ProbeVerdict::Healthy, Some(50.0))];
+        assert!(ci_gate(&results, &gate_args(true, Some(Duration::from_secs(1)))).is_ok());
+    }
 }

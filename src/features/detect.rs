@@ -10,11 +10,40 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
-use tracing::debug;
+use tracing::{debug, info};
 use url::Url;
 
-#[derive(Debug, Clone, Default)]
+/// Progress stage reported during feature discovery (TUI / logging).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiscoverStage {
+    LoadingManifest,
+    FetchingOpenApi,
+    LoadingCache,
+    BuildingHeuristics,
+    LlmRefining,
+    LlmGenerating,
+    ProbingPaths,
+}
+
+impl DiscoverStage {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::LoadingManifest => "Loading manifest…",
+            Self::FetchingOpenApi => "Fetching OpenAPI…",
+            Self::LoadingCache => "Loading cached workflows…",
+            Self::BuildingHeuristics => "Building heuristic workflows…",
+            Self::LlmRefining => "LLM refining workflows…",
+            Self::LlmGenerating => "LLM generating workflows…",
+            Self::ProbingPaths => "Probing common paths…",
+        }
+    }
+}
+
+pub type DiscoverProgressFn = Arc<dyn Fn(DiscoverStage) + Send + Sync>;
+
+#[derive(Clone, Default)]
 pub struct DiscoverOptions<'a> {
     pub manifest: Option<&'a Path>,
     pub llm: Option<AiConfig>,
@@ -23,6 +52,14 @@ pub struct DiscoverOptions<'a> {
     pub infer_workflows: bool,
     /// Skip inserting the TLS certificate canary row.
     pub skip_tls_canary: bool,
+    pub on_progress: Option<DiscoverProgressFn>,
+}
+
+fn report_progress(opts: &DiscoverOptions<'_>, stage: DiscoverStage) {
+    info!(stage = stage.label(), "discovery progress");
+    if let Some(cb) = &opts.on_progress {
+        cb(stage);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,6 +167,7 @@ pub async fn discover_features(base: &str, opts: DiscoverOptions<'_>) -> Result<
 
     // User-supplied manifest (workflow JSON or endpoint list).
     if let Some(path) = opts.manifest {
+        report_progress(&opts, DiscoverStage::LoadingManifest);
         if let Ok(workflows) = workflow::load_workflow_manifest(path, base) {
             for feat in workflows {
                 insert(&mut by_url, feat);
@@ -142,6 +180,7 @@ pub async fn discover_features(base: &str, opts: DiscoverOptions<'_>) -> Result<
         }
     }
 
+    report_progress(&opts, DiscoverStage::FetchingOpenApi);
     let openapi_text = fetch_openapi_spec(&client, &root, api_host).await;
 
     // Workflows: cached manifest → heuristics → validate → LLM refine → cache.
@@ -151,6 +190,7 @@ pub async fn discover_features(base: &str, opts: DiscoverOptions<'_>) -> Result<
             let cache_path = default_workflow_manifest_path(&root);
 
             if cache_path.is_file() {
+                report_progress(&opts, DiscoverStage::LoadingCache);
                 if let Ok(cached) = workflow::load_workflow_manifest(&cache_path, base) {
                     let workflow_count = cached
                         .iter()
@@ -168,6 +208,7 @@ pub async fn discover_features(base: &str, opts: DiscoverOptions<'_>) -> Result<
             }
 
             if !used_workflows {
+                report_progress(&opts, DiscoverStage::BuildingHeuristics);
                 let scenarios = workflow::heuristic_workflows_from_openapi(spec);
                 let mut manifest = workflow::WorkflowManifest {
                     manifest_version: MANIFEST_VERSION,
@@ -179,6 +220,7 @@ pub async fn discover_features(base: &str, opts: DiscoverOptions<'_>) -> Result<
                     let mut llm_used = false;
                     if let Some(cfg) = opts.llm.as_ref() {
                         if ai::llm_available(cfg).await {
+                            report_progress(&opts, DiscoverStage::LlmRefining);
                             let mut llm_cfg = cfg.clone();
                             llm_cfg.timeout_secs =
                                 llm_cfg.timeout_secs.min(DISCOVERY_LLM_TIMEOUT_SECS);
@@ -224,6 +266,7 @@ pub async fn discover_features(base: &str, opts: DiscoverOptions<'_>) -> Result<
                     );
                 } else if let Some(cfg) = opts.llm.as_ref() {
                     if ai::llm_available(cfg).await {
+                        report_progress(&opts, DiscoverStage::LlmGenerating);
                         let mut llm_cfg = cfg.clone();
                         llm_cfg.timeout_secs = llm_cfg.timeout_secs.min(DISCOVERY_LLM_TIMEOUT_SECS);
                         match ai::generate_workflows_from_openapi(base, spec, &llm_cfg).await {
@@ -318,6 +361,7 @@ pub async fn discover_features(base: &str, opts: DiscoverOptions<'_>) -> Result<
 
     // Fetch root — HTML links or JSON hints (skip when LLM workflows cover API host).
     if !used_workflows {
+        report_progress(&opts, DiscoverStage::ProbingPaths);
         let home = fetch_response(&client, root.as_str()).await;
         if let Some((body, content_type)) = home {
             if looks_like_json(&content_type, &body) {

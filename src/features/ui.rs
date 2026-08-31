@@ -4,9 +4,11 @@ use super::auth_spec::{build_realm_auth_specs, realm_spec_satisfied, RealmAuthSp
 use super::workflow::{detect_auth_realms, workflow_realm};
 use super::{
     build_categorized_report, discover_features, has_step_warnings, is_write_flow, AuthRealmHint,
-    DetectedFeature, DiscoverOptions, FeatureKind, FeatureResult, FeatureRunReport, FlowKind,
-    IssueCategory, LlmDiscoveryStatus, ProbeSettings, ProbeVerdict, WorkflowScenario,
+    DetectedFeature, DiscoverOptions, DiscoverStage, FeatureKind,
+    FeatureResult, FeatureRunReport, FlowKind, IssueCategory, LlmDiscoveryStatus, ProbeSettings,
+    ProbeVerdict, WorkflowScenario,
 };
+use crate::ai::{AiConfig, AiResolution};
 use crate::ai::llm_unavailable_hint;
 use crate::error::{Error, Result};
 use crate::theme::Theme;
@@ -23,6 +25,8 @@ use ratatui::widgets::{Block, Borders, Cell, Clear, Gauge, Paragraph, Row, Table
 use ratatui::Terminal;
 use std::collections::HashMap;
 use std::io::stdout;
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 enum Phase {
@@ -30,6 +34,34 @@ enum Phase {
     Select,
     Running,
     Results,
+}
+
+enum FeaturesOverlay {
+    None,
+    Help,
+    Guide,
+    Llm,
+}
+
+#[derive(Clone)]
+struct StoredDiscoverOptions {
+    manifest: Option<PathBuf>,
+    llm: Option<AiConfig>,
+    ai_resolution: Option<AiResolution>,
+    infer_workflows: bool,
+    skip_tls_canary: bool,
+}
+
+impl StoredDiscoverOptions {
+    fn capture(discover: DiscoverOptions<'_>) -> Self {
+        Self {
+            manifest: discover.manifest.map(|p| p.to_path_buf()),
+            llm: discover.llm.clone(),
+            ai_resolution: discover.ai_resolution.clone(),
+            infer_workflows: discover.infer_workflows,
+            skip_tls_canary: discover.skip_tls_canary,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -68,6 +100,12 @@ struct App {
     cached_report_lines: Option<Vec<Line<'static>>>,
     report_viewport_rows: usize,
     auth_popup: Option<AuthPopupState>,
+    overlay: FeaturesOverlay,
+    last_export: Option<std::path::PathBuf>,
+    stored_discover: StoredDiscoverOptions,
+    llm_status: Option<LlmDiscoveryStatus>,
+    confirm_quit: bool,
+    auth_dismiss_confirm: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -114,6 +152,7 @@ pub async fn run_features_interactive(
         }
     }
 
+    let stored_discover = StoredDiscoverOptions::capture(discover);
     let mut terminal = setup()?;
     let mut app = App {
         base: base.to_string(),
@@ -123,8 +162,8 @@ pub async fn run_features_interactive(
         selected: Vec::new(),
         cursor: 0,
         report: None,
-        status: if discover.infer_workflows {
-            "Fetching OpenAPI and building workflows…".into()
+        status: if stored_discover.infer_workflows {
+            "Starting discovery…".into()
         } else {
             "Discovering features…".into()
         },
@@ -142,31 +181,15 @@ pub async fn run_features_interactive(
         cached_report_lines: None,
         report_viewport_rows: 20,
         auth_popup: None,
+        overlay: FeaturesOverlay::None,
+        last_export: None,
+        stored_discover: stored_discover.clone(),
+        llm_status: None,
+        confirm_quit: false,
+        auth_dismiss_confirm: false,
     };
 
-    draw(&mut terminal, &mut app)?;
-
-    match discover_features(base, discover).await {
-        Ok(outcome) => {
-            let feats = outcome.features;
-            let n = feats.len();
-            let workflows = feats
-                .iter()
-                .filter(|f| f.kind == FeatureKind::Workflow)
-                .count();
-            app.selected = feats.iter().map(default_selected).collect();
-            app.features = feats;
-            maybe_auto_open_auth_popup(&mut app);
-            app.phase = Phase::Select;
-            app.status = discovery_status_line(workflows, n, &outcome.llm);
-        }
-        Err(e) => {
-            app.error = Some(e.to_string());
-            app.phase = Phase::Select;
-            app.status = "Discovery failed — q to quit".into();
-        }
-    }
-    draw(&mut terminal, &mut app)?;
+    run_discovery_pass(&mut terminal, &mut app, stored_discover).await?;
 
     loop {
         if event::poll(Duration::from_millis(100)).map_err(Error::Io)? {
@@ -175,6 +198,13 @@ pub async fn run_features_interactive(
                     continue;
                 }
                 if app.auth_popup.is_some() && handle_auth_popup(&mut app, key.code) {
+                    continue;
+                }
+                if !matches!(app.overlay, FeaturesOverlay::None) {
+                    if matches!(key.code, KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('l')) {
+                        app.overlay = FeaturesOverlay::None;
+                        draw(&mut terminal, &mut app)?;
+                    }
                     continue;
                 }
                 if app.inspect_open {
@@ -234,6 +264,16 @@ pub async fn run_features_interactive(
                 }
                 match app.phase {
                     Phase::Select => {
+                        if matches!(key.code, KeyCode::Char('R')) {
+                            let stored = app.stored_discover.clone();
+                            run_discovery_pass(&mut terminal, &mut app, stored).await?;
+                            continue;
+                        }
+                        if matches!(key.code, KeyCode::Char('l')) {
+                            app.overlay = FeaturesOverlay::Llm;
+                            draw(&mut terminal, &mut app)?;
+                            continue;
+                        }
                         if handle_select(&mut app, key.code)? {
                             break;
                         }
@@ -263,6 +303,7 @@ pub async fn run_features_interactive(
                                 app.phase = Phase::Running;
                                 app.scroll = 0;
                                 app.run_follow = true;
+                                app.confirm_quit = false;
                                 if let Some(first) = app.selected.iter().position(|on| *on) {
                                     app.cursor = first;
                                 }
@@ -350,6 +391,14 @@ pub async fn run_features_interactive(
                         let page = app.viewport_rows.max(1);
                         match key.code {
                             KeyCode::Char('q') | KeyCode::Esc => break,
+                            KeyCode::Char('?') => app.overlay = FeaturesOverlay::Help,
+                            KeyCode::Char('g') => app.overlay = FeaturesOverlay::Guide,
+                            KeyCode::Char('t') => app.theme = app.theme.cycle(),
+                            KeyCode::Char('e') => {
+                                if let Err(e) = export_features_report(&mut app) {
+                                    app.error = Some(e.to_string());
+                                }
+                            }
                             KeyCode::Char('b') => {
                                 app.inspect_open = false;
                                 app.report_open = false;
@@ -389,9 +438,14 @@ pub async fn run_features_interactive(
                     }
                     Phase::Running => {
                         if matches!(key.code, KeyCode::Char('q') | KeyCode::Esc) {
-                            break;
+                            if app.confirm_quit {
+                                break;
+                            }
+                            app.confirm_quit = true;
+                            app.status = format!("{} — press q again to abort", app.status);
+                        } else {
+                            scroll_list_by(&mut app, key.code);
                         }
-                        scroll_list_by(&mut app, key.code);
                     }
                     Phase::Discovering => {
                         if matches!(key.code, KeyCode::Char('q') | KeyCode::Esc) {
@@ -457,6 +511,136 @@ pub async fn run_features_interactive(
     Ok(())
 }
 
+async fn run_discovery_pass(
+    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+    app: &mut App,
+    stored: StoredDiscoverOptions,
+) -> Result<()> {
+    app.phase = Phase::Discovering;
+    app.error = None;
+    app.confirm_quit = false;
+    app.status = if stored.infer_workflows {
+        "Starting discovery…".into()
+    } else {
+        "Discovering features…".into()
+    };
+    draw(terminal, app)?;
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<DiscoverStage>();
+    let progress = Arc::new(move |stage: DiscoverStage| {
+        let _ = tx.send(stage);
+    });
+    let base = app.base.clone();
+    let manifest = stored.manifest.clone();
+    let llm = stored.llm.clone();
+    let ai_resolution = stored.ai_resolution.clone();
+    let infer_workflows = stored.infer_workflows;
+    let skip_tls_canary = stored.skip_tls_canary;
+    let handle = tokio::spawn(async move {
+        let opts = DiscoverOptions {
+            manifest: manifest.as_deref(),
+            llm,
+            ai_resolution,
+            infer_workflows,
+            skip_tls_canary,
+            on_progress: Some(progress),
+        };
+        discover_features(&base, opts).await
+    });
+
+    loop {
+        while let Ok(stage) = rx.try_recv() {
+            app.status = stage.label().to_string();
+        }
+        if handle.is_finished() {
+            break;
+        }
+        if event::poll(Duration::from_millis(50)).map_err(Error::Io)? {
+            if let Event::Key(key) = event::read().map_err(Error::Io)? {
+                if key_event_active(&key, app)
+                    && matches!(key.code, KeyCode::Char('q') | KeyCode::Esc)
+                {
+                    handle.abort();
+                    app.phase = Phase::Select;
+                    app.status = "Discovery cancelled".into();
+                    draw(terminal, app)?;
+                    return Ok(());
+                }
+            }
+        }
+        app.tick = app.tick.wrapping_add(1);
+        draw(terminal, app)?;
+    }
+
+    match handle.await {
+        Ok(Ok(outcome)) => apply_discovery_outcome(app, outcome),
+        Ok(Err(e)) => apply_discovery_error(app, e.to_string()),
+        Err(e) => apply_discovery_error(app, format!("discovery task failed: {e}")),
+    }
+    draw(terminal, app)?;
+    Ok(())
+}
+
+fn apply_discovery_outcome(app: &mut App, outcome: super::DiscoverOutcome) {
+    let feats = outcome.features;
+    let n = feats.len();
+    let workflows = feats
+        .iter()
+        .filter(|f| f.kind == FeatureKind::Workflow)
+        .count();
+    app.llm_status = Some(outcome.llm.clone());
+    app.selected = feats.iter().map(default_selected).collect();
+    app.features = feats;
+    app.cursor = 0;
+    app.scroll = 0;
+    maybe_auto_open_auth_popup(app);
+    app.phase = Phase::Select;
+    if n == 0 {
+        app.status = "No features found — R retry · try --manifest or --no-llm · q quit".into();
+    } else {
+        app.status = discovery_status_line(workflows, n, &outcome.llm);
+    }
+}
+
+fn apply_discovery_error(app: &mut App, message: String) {
+    app.error = Some(message);
+    app.llm_status = None;
+    app.features.clear();
+    app.selected.clear();
+    app.phase = Phase::Select;
+    app.status =
+        "Discovery failed — R retry · try --manifest or --no-llm · l LLM status · q quit".into();
+}
+
+fn draw_discovering(frame: &mut ratatui::Frame, area: Rect, app: &App) {
+    let spin = ['|', '/', '-', '\\'][(app.tick as usize / 8) % 4];
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled(format!(" {spin} "), Style::default().fg(app.theme.brand)),
+            Span::raw(app.status.as_str()),
+        ]),
+        Line::from(""),
+        Line::from("  q cancel discovery"),
+    ];
+    if let Some(res) = app.stored_discover.ai_resolution.as_ref() {
+        if !res.is_ready() {
+            lines.push(Line::from(""));
+            lines.push(Line::styled(
+                "  LLM unavailable — heuristics will be used (l for details)",
+                Style::default().fg(app.theme.muted),
+            ));
+        }
+    }
+    frame.render_widget(
+        Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Discovering "),
+        ),
+        area,
+    );
+}
+
 fn max_list_scroll(total: usize, viewport_rows: usize) -> usize {
     total.saturating_sub(viewport_rows.max(1))
 }
@@ -510,10 +694,16 @@ async fn wait_probe_with_ui(
             if let Event::Key(key) = event::read().map_err(Error::Io)? {
                 if key.kind == KeyEventKind::Press {
                     if matches!(key.code, KeyCode::Char('q') | KeyCode::Esc) {
-                        handle.abort();
-                        return Ok(None);
+                        if app.confirm_quit {
+                            handle.abort();
+                            return Ok(None);
+                        }
+                        app.confirm_quit = true;
+                        app.status = format!("{} — press q again to abort", app.status);
+                    } else {
+                        app.confirm_quit = false;
+                        scroll_list_by(app, key.code);
                     }
-                    scroll_list_by(app, key.code);
                 }
             }
         }
@@ -564,6 +754,10 @@ fn handle_select(app: &mut App, code: KeyCode) -> Result<bool> {
         KeyCode::Char('c') => {
             open_auth_popup(app);
         }
+        KeyCode::Char('?') => app.overlay = FeaturesOverlay::Help,
+        KeyCode::Char('g') => app.overlay = FeaturesOverlay::Guide,
+        KeyCode::Char('l') => app.overlay = FeaturesOverlay::Llm,
+        KeyCode::Char('t') => app.theme = app.theme.cycle(),
         KeyCode::Char('n') => {
             app.selected.fill(false);
         }
@@ -631,14 +825,7 @@ fn draw(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, app: &mut Ap
                 Phase::Results => 3,
             };
             match phase_kind {
-                0 => {
-                    let p = Paragraph::new(app.status.as_str()).block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .title(" Discovering "),
-                    );
-                    frame.render_widget(p, chunks[1]);
-                }
+                0 => draw_discovering(frame, chunks[1], app),
                 1 => draw_select_with_detail(frame, chunks[1], app),
                 2 => draw_running_with_detail(frame, chunks[1], app),
                 _ => draw_results_with_detail(frame, chunks[1], chunks[2], app),
@@ -671,6 +858,12 @@ fn draw(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, app: &mut Ap
             } else if app.auth_popup.is_some() {
                 draw_auth_popup(frame, area, app);
             }
+            match app.overlay {
+                FeaturesOverlay::Help => draw_help_overlay(frame, area, app),
+                FeaturesOverlay::Guide => draw_guide_overlay(frame, area, app),
+                FeaturesOverlay::Llm => draw_llm_overlay(frame, area, app),
+                FeaturesOverlay::None => {}
+            }
         })
         .map_err(Error::Io)?;
     Ok(())
@@ -698,6 +891,23 @@ fn result_row_style(theme: &Theme, r: &FeatureResult) -> Style {
     }
 }
 
+fn verdict_glyph(theme: &Theme, verdict: ProbeVerdict, warn: bool) -> String {
+    if theme.use_color {
+        return match (verdict, warn) {
+            (ProbeVerdict::Healthy, true) => "✓⚠".into(),
+            (ProbeVerdict::Healthy, false) => "✓".into(),
+            (ProbeVerdict::Reachable, _) => "◐".into(),
+            (ProbeVerdict::Failed, _) => "✗".into(),
+        };
+    }
+    match verdict {
+        ProbeVerdict::Healthy if warn => "OK!".into(),
+        ProbeVerdict::Healthy => "OK".into(),
+        ProbeVerdict::Reachable => "REACH".into(),
+        ProbeVerdict::Failed => "FAIL".into(),
+    }
+}
+
 fn result_mark_line(theme: &Theme, r: &FeatureResult, selected: bool) -> Line<'static> {
     let warn = has_step_warnings(r);
     let extra = if selected {
@@ -705,24 +915,14 @@ fn result_mark_line(theme: &Theme, r: &FeatureResult, selected: bool) -> Line<'s
     } else {
         Modifier::empty()
     };
-    match r.verdict {
-        ProbeVerdict::Healthy if warn => Line::from(vec![
-            Span::styled("✓", Style::default().fg(theme.ok).add_modifier(extra)),
-            Span::styled("⚠", Style::default().fg(theme.warn).add_modifier(extra)),
-        ]),
-        ProbeVerdict::Healthy => Line::from(Span::styled(
-            "✓",
-            Style::default().fg(theme.ok).add_modifier(extra),
-        )),
-        ProbeVerdict::Reachable => Line::from(Span::styled(
-            "◐",
-            Style::default().fg(theme.warn).add_modifier(extra),
-        )),
-        ProbeVerdict::Failed => Line::from(Span::styled(
-            "✗",
-            Style::default().fg(theme.critical).add_modifier(extra),
-        )),
-    }
+    let glyph = verdict_glyph(theme, r.verdict, warn);
+    let style = match r.verdict {
+        ProbeVerdict::Healthy if warn => Style::default().fg(theme.warn).add_modifier(extra),
+        ProbeVerdict::Healthy => Style::default().fg(theme.ok).add_modifier(extra),
+        ProbeVerdict::Reachable => Style::default().fg(theme.warn).add_modifier(extra),
+        ProbeVerdict::Failed => Style::default().fg(theme.critical).add_modifier(extra),
+    };
+    Line::from(Span::styled(glyph, style))
 }
 
 fn result_data_style(theme: &Theme, r: &FeatureResult, selected: bool) -> Style {
@@ -1325,7 +1525,7 @@ fn draw_legend(frame: &mut ratatui::Frame, area: Rect, app: &App) {
                     .add_modifier(Modifier::BOLD),
             ),
             Span::raw(format!(
-                "  ↑↓ PgUp/Dn · Space toggle · a all · n none · c auth · d inspect · Enter/r run{flow_hint}"
+                "  ↑↓ PgUp/Dn · Space toggle · a all · n none · c auth · d inspect · Enter/r run · ? help · g guide · t theme{flow_hint}"
             )),
         ])
     };
@@ -1706,6 +1906,45 @@ fn styled_kv(key: &str, value: &str, theme: &Theme) -> Line<'static> {
     ])
 }
 
+fn env_var_is_set(name: &str) -> bool {
+    std::env::var(name)
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false)
+}
+
+fn env_var_names_for_field(key: &str, realm: AuthRealmHint) -> Vec<&'static str> {
+    match key {
+        "email" => match realm {
+            AuthRealmHint::Annotator => {
+                vec!["TRACE_DIFF_ANNOTATOR_EMAIL", "CONFUCIUS_ANNOTATOR_EMAIL"]
+            }
+            _ => vec!["TRACE_DIFF_EMAIL", "CONFUCIUS_EMAIL"],
+        },
+        "password" => match realm {
+            AuthRealmHint::Annotator => {
+                vec!["TRACE_DIFF_ANNOTATOR_PASSWORD", "CONFUCIUS_ANNOTATOR_PASSWORD"]
+            }
+            _ => vec!["TRACE_DIFF_PASSWORD", "CONFUCIUS_PASSWORD"],
+        },
+        "secret" => vec!["TRACE_DIFF_ADMIN_SECRET", "CONFUCIUS_ADMIN_KEY"],
+        "bearer_token" => vec!["TRACE_DIFF_BEARER_TOKEN"],
+        _ if key.contains("captcha") => vec!["TRACE_DIFF_CAPTCHA_TOKEN", "CAPTCHA_TOKEN"],
+        _ => vec![],
+    }
+}
+
+fn auth_env_summary_for_spec(spec: &RealmAuthSpec) -> String {
+    let mut vars = Vec::new();
+    for field in &spec.fields {
+        for name in env_var_names_for_field(&field.key, spec.realm) {
+            if env_var_is_set(name) && !vars.contains(&name) {
+                vars.push(name);
+            }
+        }
+    }
+    vars.join(", ")
+}
+
 fn maybe_auto_open_auth_popup(app: &mut App) {
     let workflows: Vec<WorkflowScenario> = app
         .features
@@ -1740,6 +1979,12 @@ fn open_auth_popup(app: &mut App) {
     for spec in &specs {
         include.insert(spec.realm, true);
         rows.push(AuthPopupRow::ToggleRealm { realm: spec.realm });
+        let env_line = auth_env_summary_for_spec(spec);
+        if !env_line.is_empty() {
+            rows.push(AuthPopupRow::Summary {
+                text: format!("Env set: {env_line}"),
+            });
+        }
         rows.push(AuthPopupRow::Summary {
             text: spec.login_summary.clone(),
         });
@@ -1774,6 +2019,7 @@ fn open_auth_popup(app: &mut App) {
         values,
         include,
     });
+    app.auth_dismiss_confirm = false;
 }
 
 fn auth_popup_row_is_text(row: &AuthPopupRow) -> bool {
@@ -1796,11 +2042,17 @@ fn handle_auth_popup(app: &mut App, code: KeyCode) -> bool {
 
     match code {
         KeyCode::Esc => {
-            app.auth_popup = None;
+            if app.auth_dismiss_confirm {
+                app.auth_popup = None;
+                app.auth_dismiss_confirm = false;
+            } else {
+                app.auth_dismiss_confirm = true;
+            }
         }
         KeyCode::Enter => {
             apply_auth_popup(app);
             app.auth_popup = None;
+            app.auth_dismiss_confirm = false;
         }
         KeyCode::Tab | KeyCode::Down => {
             popup.field_idx = (popup.field_idx + 1) % popup.rows.len().max(1);
@@ -1935,9 +2187,11 @@ fn draw_auth_popup(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         .split(rect);
 
     let mut lines: Vec<Line> = vec![
-        Line::from(
-            "Required fields marked * · Tab/↑↓ move · Space toggle realm · Enter save · Esc skip",
-        ),
+        Line::from(if app.auth_dismiss_confirm {
+            "Press Esc again to skip auth · Enter save · Tab/↑↓ move"
+        } else {
+            "Required fields marked * · Tab/↑↓ move · Space toggle realm · Enter save · Esc skip"
+        }),
         Line::from(""),
     ];
 
@@ -2143,4 +2397,148 @@ fn truncate(s: &str, max: usize) -> String {
     } else {
         format!("{}…", &s[..max.saturating_sub(1)])
     }
+}
+
+fn export_features_report(app: &mut App) -> Result<()> {
+    let report = app
+        .report
+        .as_ref()
+        .ok_or_else(|| Error::Other("no report to export — run features first".into()))?;
+    std::fs::create_dir_all(".trace-diff").map_err(Error::Io)?;
+    let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+    let path = std::path::PathBuf::from(format!(".trace-diff/features-report-{stamp}.json"));
+    let json = serde_json::to_string_pretty(report).map_err(|e| Error::Other(e.to_string()))?;
+    std::fs::write(&path, json).map_err(Error::Io)?;
+    app.last_export = Some(path.clone());
+    app.status = format!("Exported {}", path.display());
+    app.error = None;
+    Ok(())
+}
+
+fn llm_mode_label(llm: &LlmDiscoveryStatus) -> &'static str {
+    match llm {
+        LlmDiscoveryStatus::Disabled => "disabled (--no-llm)",
+        LlmDiscoveryStatus::Unavailable { .. } => "unavailable",
+        LlmDiscoveryStatus::Cached => "cached workflows",
+        LlmDiscoveryStatus::HeuristicsOnly => "heuristics only",
+        LlmDiscoveryStatus::Refined { .. } => "LLM refined",
+        LlmDiscoveryStatus::Generated { .. } => "LLM generated",
+    }
+}
+
+fn draw_llm_overlay(frame: &mut ratatui::Frame, area: Rect, app: &App) {
+    let popup = centered_rect(76, 62, area);
+    frame.render_widget(Clear, popup);
+    let mut lines = vec![
+        Line::from(" LLM discovery status "),
+        Line::from(""),
+    ];
+    if let Some(llm) = &app.llm_status {
+        lines.push(Line::from(format!("  Mode: {}", llm_mode_label(llm))));
+        if let Some(suffix) = llm.status_suffix() {
+            lines.push(Line::from(format!("  {suffix}")));
+        }
+        if let Some(hint) = llm.stderr_hint() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(format!("  {hint}")));
+        }
+    } else if let Some(res) = app.stored_discover.ai_resolution.as_ref() {
+        lines.push(Line::from(format!(
+            "  Provider: {} → {}",
+            res.requested.label(),
+            res.resolved_label()
+        )));
+        if res.is_ready() {
+            if let Some(cfg) = &res.config {
+                lines.push(Line::from(format!("  Model: {}", cfg.resolve_model())));
+            }
+        } else {
+            lines.push(Line::from("  LLM not configured — heuristics only"));
+            if !res.groq_key_set {
+                lines.push(Line::from("  GROQ_API_KEY: not set"));
+            }
+            if !res.ollama_reachable {
+                lines.push(Line::from(format!(
+                    "  Ollama: unreachable at {}",
+                    res.ollama_host
+                )));
+            }
+        }
+    } else {
+        lines.push(Line::from("  LLM disabled (--no-llm)"));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from("  R rediscover · docs/LLM_SETUP.md"));
+    lines.push(Line::from("  Esc or l to close"));
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" LLM ")
+                    .border_style(Style::default().fg(app.theme.brand)),
+            )
+            .wrap(Wrap { trim: true }),
+        popup,
+    );
+}
+
+fn draw_help_overlay(frame: &mut ratatui::Frame, area: Rect, app: &App) {
+    let popup = centered_rect(78, 70, area);
+    frame.render_widget(Clear, popup);
+    let lines = vec![
+        Line::from(" Keyboard — features TUI "),
+        Line::from(""),
+        Line::from("  Select:  ↑↓ j/k · Space toggle · a all · n none · Enter/r run"),
+        Line::from("  Auth:    c credentials popup"),
+        Line::from("  LLM:     l status panel · R rediscover"),
+        Line::from("  Inspect: d / i step detail"),
+        Line::from("  Results: R categorized report · e export JSON"),
+        Line::from("  Help:    ? help · g guide · t theme · q quit"),
+        Line::from(""),
+        Line::from("  OK=green  REACH=yellow (auth/body)  FAIL=red"),
+        Line::from(""),
+        Line::from("  Esc or ? to close"),
+    ];
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Help ")
+                    .border_style(Style::default().fg(app.theme.brand)),
+            )
+            .wrap(Wrap { trim: true }),
+        popup,
+    );
+}
+
+fn draw_guide_overlay(frame: &mut ratatui::Frame, area: Rect, app: &App) {
+    let popup = centered_rect(82, 72, area);
+    frame.render_widget(Clear, popup);
+    let lines = vec![
+        Line::from(" Quick guide — trace-diff features "),
+        Line::from(""),
+        Line::from(" 1. Discovery fetches OpenAPI and builds workflow rows (FLOW)."),
+        Line::from(" 2. FLOW = multi-step API scenario (login → GET chain)."),
+        Line::from(" 3. WRITE = mutating smoke (off by default). TLS = cert canary."),
+        Line::from(" 4. Yellow REACH = route exists, needs auth — press c to set creds."),
+        Line::from(" 5. Optional LLM refine: set GROQ_API_KEY or run Ollama."),
+        Line::from("    Check: trace-diff features --check-llm"),
+        Line::from(""),
+        Line::from("  Docs: docs/FEATURES_AUTODETECT.md · docs/LLM_SETUP.md"),
+        Line::from(""),
+        Line::from("  Esc or ? to close"),
+    ];
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Guide ")
+                    .border_style(Style::default().fg(app.theme.brand)),
+            )
+            .wrap(Wrap { trim: true }),
+        popup,
+    );
 }

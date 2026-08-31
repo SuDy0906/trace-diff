@@ -834,18 +834,6 @@ fn draw_verdict(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     frame.render_widget(p, area);
 }
 
-fn stage_heat(ms: f64) -> ratatui::style::Color {
-    if ms < 50.0 {
-        ratatui::style::Color::Green
-    } else if ms < 150.0 {
-        ratatui::style::Color::Cyan
-    } else if ms < 400.0 {
-        ratatui::style::Color::Yellow
-    } else {
-        ratatui::style::Color::Red
-    }
-}
-
 fn draw_journey(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     let target = &app.view.target;
     let ip = app.view.resolved.as_deref().unwrap_or("…");
@@ -923,7 +911,7 @@ fn draw_journey(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         strip.push(Span::styled(
             (*label).to_string(),
             Style::default()
-                .fg(stage_heat(*ms))
+                .fg(app.theme.stage_heat_color(*ms))
                 .add_modifier(Modifier::BOLD),
         ));
     }
@@ -959,7 +947,7 @@ fn draw_journey(frame: &mut ratatui::Frame, area: Rect, app: &App) {
             "█".repeat(fill),
             "░".repeat(max_bar.saturating_sub(fill))
         );
-        let heat = stage_heat(*ms);
+        let heat = app.theme.stage_heat_color(*ms);
         lines.push(Line::from(vec![
             Span::styled(
                 format!("{label:<18}"),
@@ -1211,7 +1199,11 @@ fn draw_hops(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         .map(|(i, h)| {
             let live = h.address.is_some() && h.metrics.recv > 0;
             let is_dest = i == last && tr.reached;
-            let heat = h.metrics.p50_ms.map(stage_heat).unwrap_or(app.theme.muted);
+            let heat = h
+                .metrics
+                .p50_ms
+                .map(|ms| app.theme.stage_heat_color(ms))
+                .unwrap_or(app.theme.muted);
 
             let marker = if is_dest {
                 "●"
@@ -1345,7 +1337,11 @@ fn build_path_ribbon(tr: &TraceResult, app: &App) -> Line<'static> {
                     .add_modifier(Modifier::BOLD),
             )
         } else if live {
-            let heat = h.metrics.p50_ms.map(stage_heat).unwrap_or(app.theme.brand);
+            let heat = h
+                .metrics
+                .p50_ms
+                .map(|ms| app.theme.stage_heat_color(ms))
+                .unwrap_or(app.theme.brand);
             ("◆", Style::default().fg(heat))
         } else {
             ("○", Style::default().fg(app.theme.muted))

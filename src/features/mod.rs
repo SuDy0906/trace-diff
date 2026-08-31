@@ -9,7 +9,10 @@ mod ui;
 mod workflow;
 
 pub use auth::{AuthMode, AuthProfile, AuthProfiles, RealmCredentials};
-pub use detect::{discover_features, DiscoverOptions, DiscoverOutcome, LlmDiscoveryStatus};
+pub use detect::{
+    discover_features, DiscoverOptions, DiscoverOutcome, DiscoverProgressFn, DiscoverStage,
+    LlmDiscoveryStatus,
+};
 pub use openapi_index::{templated_path_for_probe, AuthRealmHint, OpenApiIndex};
 pub use run_report::{build_categorized_report, CategorizedRunReport, IssueCategory};
 pub use ui::run_features_interactive;

@@ -60,3 +60,20 @@ Delete the DB when finished if it contains internal hostnames:
 ```bash
 rm ./trace-diff.db   # or del on Windows
 ```
+
+---
+
+## Optional LLM (Groq / Ollama)
+
+Workflow discovery can optionally send **OpenAPI spec excerpts** to a third-party LLM:
+
+| Provider | Data sent | Retention |
+|---|---|---|
+| **Groq** | OpenAPI JSON + heuristic workflow draft (no user passwords) | Subject to [Groq privacy policy](https://groq.com/privacy-policy/) — do not enable if your OpenAPI describes secrets |
+| **Ollama (local)** | Same payloads to your local host only | Stays on your machine |
+
+**Never logged:** `GROQ_API_KEY`, bearer tokens, passwords, or auth popup values. Keys are read from env/CLI only at runtime.
+
+Disable cloud LLM entirely with `trace-diff features --no-llm` (heuristic workflows only).
+
+See [LLM_SETUP.md](LLM_SETUP.md) for configuration.

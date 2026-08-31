@@ -2,9 +2,12 @@
 name = "trace-diff"
 version = "0.1.0"
 edition = "2021"
-description = "Interactive terminal-native diagnostic CLI: L3/L4 traceroute + L7 HTTP lifecycle diffs"
+description = "Interactive terminal-native diagnostic CLI: L3/L4 traceroute + L7 HTTP lifecycle diffs and OpenAPI workflow testing"
 license = "MIT"
 readme = "README.md"
+repository = "https://github.com/SuDy0906/trace-diff"
+homepage = "https://github.com/SuDy0906/trace-diff"
+documentation = "https://github.com/SuDy0906/trace-diff#readme"
 
 [dependencies]
 # CLI & Error Handling

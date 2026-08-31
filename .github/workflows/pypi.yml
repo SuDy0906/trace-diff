@@ -9,6 +9,15 @@ permissions:
   contents: read
 
 jobs:
+  test:
+    name: cargo test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --all-targets
+
   build-wheels:
     name: wheel (${{ matrix.os }}-${{ matrix.target }})
     runs-on: ${{ matrix.os }}
@@ -20,7 +29,6 @@ jobs:
             target: x86_64-pc-windows-msvc
           - os: macos-latest
             target: aarch64-apple-darwin
-          # Cross-compile Intel wheels on Apple Silicon; macos-13 runners are scarce.
           - os: macos-latest
             target: x86_64-apple-darwin
           - os: ubuntu-latest
@@ -58,29 +66,41 @@ jobs:
           name: wheel-${{ matrix.os }}-${{ matrix.target }}
           path: dist/*.whl
 
-  smoke-test-windows:
+  smoke-test:
+    name: smoke (${{ matrix.os }})
     needs: build-wheels
-    runs-on: windows-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: wheel-windows-latest-x86_64-pc-windows-msvc
+          - os: macos-latest
+            artifact: wheel-macos-latest-aarch64-apple-darwin
+          - os: ubuntu-latest
+            artifact: wheel-ubuntu-latest-x86_64-unknown-linux-gnu
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: wheel-windows-*
-          merge-multiple: true
+          name: ${{ matrix.artifact }}
           path: dist
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Install wheel
-        shell: pwsh
-        run: pip install (Get-ChildItem dist/*.whl | Select-Object -First 1)
+        shell: bash
+        run: pip install dist/*.whl
       - name: Smoke test
         run: |
+          trace-diff --version
           trace-diff --help
           trace-diff run https://example.com --skip-trace --headless
+          trace-diff features --check-llm
 
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-wheels, smoke-test-windows]
+    needs: [test, build-wheels, smoke-test]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:

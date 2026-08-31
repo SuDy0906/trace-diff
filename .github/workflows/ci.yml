@@ -30,7 +30,7 @@ jobs:
         run: |
           cargo run --quiet -- run https://example.com --skip-trace --headless --save-baseline ci-smoke --db ./ci.db
           cargo run --quiet -- list --db ./ci.db
-          cargo run --quiet -- diff ci-smoke https://example.com --skip-trace --headless --db ./ci.db || true
+          cargo run --quiet -- diff ci-smoke https://example.com --skip-trace --headless --db ./ci.db
 
   lint:
     name: fmt + clippy
@@ -42,5 +42,35 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --all-targets -- -D warnings || cargo clippy --all-targets
+      - run: cargo clippy --all-targets -- -D warnings
 
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - run: cargo audit
+
+  wheel-build:
+    name: wheel build (PR validation)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install maturin
+        run: pip install "maturin>=1.7,<2"
+      - name: Build Linux wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: x86_64-unknown-linux-gnu
+          manylinux: 2_28
+          command: build
+          args: --release --out dist -b bin

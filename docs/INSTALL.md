@@ -102,6 +102,16 @@ trace-diff run 1.1.1.1 --skip-http --output text
 
 Requires a **manylinux**-compatible x86_64 glibc system (wheels target manylinux 2_28).
 
+### Unsupported platforms (pip wheels)
+
+| Platform | pip wheel | Alternative |
+|----------|-----------|-------------|
+| Linux aarch64 (ARM64) | not published | `cargo build --release` from source |
+| Alpine / musl Linux | not published | build from source on glibc/musl target |
+| Windows arm64 | not published | build from source |
+
+See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for details.
+
 ---
 
 ## Verify

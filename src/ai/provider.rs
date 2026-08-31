@@ -179,32 +179,72 @@ pub async fn resolve_ai_config(
 }
 
 pub fn print_llm_check(resolution: &AiResolution) {
+    let report = llm_check_report(resolution);
     if resolution.requested == AiProvider::Auto {
-        println!("  auto resolved: {}", resolution.resolved_label());
+        println!("  auto resolved: {}", report.resolved_provider);
     } else {
-        println!("  provider: {}", resolution.requested.label());
+        println!("  provider: {}", report.requested_provider);
     }
 
-    if let Some(cfg) = &resolution.config {
-        println!("  model: {}", cfg.resolve_model());
-        println!("  status: ready ({})", cfg.active_label());
+    if let Some(model) = &report.model {
+        println!("  model: {model}");
+        println!("  status: ready ({})", report.resolved_provider);
     } else {
         if resolution.requested == AiProvider::Auto || resolution.requested == AiProvider::Ollama {
-            if resolution.ollama_reachable {
-                println!("  ollama: reachable at {}", resolution.ollama_host);
+            if report.ollama_reachable {
+                println!("  ollama: reachable at {}", report.ollama_host);
             } else {
-                println!("  ollama: unreachable at {}", resolution.ollama_host);
+                println!("  ollama: unreachable at {}", report.ollama_host);
             }
         }
         if resolution.requested == AiProvider::Auto || resolution.requested == AiProvider::Groq {
-            if resolution.groq_key_set {
+            if report.groq_key_set {
                 println!("  groq: GROQ_API_KEY set");
             } else {
                 println!("  groq: GROQ_API_KEY not set");
             }
         }
-        println!("  status: heuristics only — see docs/LLM_SETUP.md");
+        println!("  status: {}", report.status);
     }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LlmCheckReport {
+    pub requested_provider: String,
+    pub resolved_provider: String,
+    pub ready: bool,
+    pub model: Option<String>,
+    pub groq_key_set: bool,
+    pub ollama_reachable: bool,
+    pub ollama_host: String,
+    pub status: String,
+}
+
+pub fn llm_check_report(resolution: &AiResolution) -> LlmCheckReport {
+    let ready = resolution.is_ready();
+    LlmCheckReport {
+        requested_provider: resolution.requested.label().to_string(),
+        resolved_provider: resolution.resolved_label().to_string(),
+        ready,
+        model: resolution.config.as_ref().map(|c| c.resolve_model().to_string()),
+        groq_key_set: resolution.groq_key_set,
+        ollama_reachable: resolution.ollama_reachable,
+        ollama_host: resolution.ollama_host.clone(),
+        status: if ready {
+            format!("ready ({})", resolution.resolved_label())
+        } else {
+            "heuristics only — see docs/LLM_SETUP.md".into()
+        },
+    }
+}
+
+pub fn print_llm_check_json(resolution: &AiResolution) -> Result<()> {
+    let report = llm_check_report(resolution);
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&report).map_err(|e| Error::Other(e.to_string()))?
+    );
+    Ok(())
 }
 
 pub fn llm_unavailable_hint(resolution: &AiResolution) -> Option<String> {
@@ -451,5 +491,41 @@ mod tests {
         assert!(!groq_key_set(Some("")));
         assert!(!groq_key_set(Some("   ")));
         assert!(groq_key_set(Some("gsk_test")));
+    }
+
+    #[tokio::test]
+    async fn auto_resolves_ollama_when_mock_reachable() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/tags"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(r#"{"models":[{"name":"llama3.2"}]}"#),
+            )
+            .mount(&server)
+            .await;
+
+        let res = resolve_ai_config("auto", None, server.uri(), None, 5)
+            .await
+            .unwrap();
+        assert!(res.is_ready());
+        assert_eq!(
+            res.config.as_ref().unwrap().resolved,
+            ResolvedProvider::Ollama
+        );
+    }
+
+    #[tokio::test]
+    async fn llm_check_report_json_fields() {
+        let res = resolve_ai_config("auto", None, "http://127.0.0.1:1".into(), None, 2)
+            .await
+            .unwrap();
+        let report = llm_check_report(&res);
+        assert!(!report.ready);
+        assert_eq!(report.requested_provider, "auto");
+        assert!(!report.groq_key_set || report.ready);
     }
 }

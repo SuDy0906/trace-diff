@@ -5,7 +5,6 @@ Install the prebuilt CLI — **no Rust or cargo required**:
 ```bash
 pip install trace-route-test
 trace-diff --help
-trace-diff run https://example.com --skip-trace --headless
 ```
 
 | | |
@@ -15,6 +14,17 @@ trace-diff run https://example.com --skip-trace --headless
 | **Current version** | see [pypi.org/project/trace-route-test](https://pypi.org/project/trace-route-test/) |
 
 Wheels ship the native `trace-diff` binary onto your `PATH` inside the active Python environment (venv, conda, or user site-packages).
+
+## What you get
+
+One binary, two main workflows:
+
+| Mode | Command | Purpose |
+|------|---------|---------|
+| **Network probe** | `trace-diff run` | L3/L4 traceroute + L7 HTTP timing (DNS→TCP→TLS→TTFB), baselines, diffs |
+| **API features** | `trace-diff features` | OpenAPI workflow discovery, multi-step auth flows, interactive or CI scorecard |
+
+Both are included in every wheel. Use `--skip-trace` on `run` for HTTP-only probing without Admin/sudo.
 
 ## Install options
 
@@ -56,26 +66,80 @@ CI publishes wheels for:
 
 ## Privileges
 
-| Platform | L3/L4 traceroute | L7 HTTP (`--skip-trace`) |
-|----------|------------------|---------------------------|
-| Windows | Administrator | works |
-| macOS | often `sudo` | works |
-| Linux | `setcap` or `sudo` | works |
+| Platform | L3/L4 traceroute | L7 HTTP (`--skip-trace`) | `features` (HTTP probes) |
+|----------|------------------|---------------------------|---------------------------|
+| Windows | Administrator | works | works |
+| macOS | often `sudo` | works | works |
+| Linux | `setcap` or `sudo` | works | works |
 
-See [INSTALL.md](INSTALL.md) for per-platform examples using the pip-installed `trace-diff` command.
+See [INSTALL.md](INSTALL.md) for per-platform examples.
 
-## Common commands (after pip install)
+## Network probe (`run` / `diff`)
+
+Trace routes and measure HTTP connection phases. Save baselines and diff later runs.
 
 ```bash
+# Smoke test (no admin)
 trace-diff run https://example.com --skip-trace --headless
-trace-diff features https://api.example.com
-trace-diff diff staging https://example.com --output json
+
+# Save baseline + diff in CI
+trace-diff run https://api.example.com --headless --save-baseline staging
+trace-diff diff staging https://api.example.com --output json
+
+# Fail pipeline if TTFB regresses
+trace-diff run https://api.example.com --headless --fail-if-ttfb-exceeds 250ms
+
 trace-diff list
 ```
 
+## Features (`features`)
+
+Auto-detect **API workflow scenarios** from a site's OpenAPI spec: health smokes, login→token→GET chains, tag-grouped flows, TLS cert canary. Interactive TUI to select and run, or headless for CI.
+
+```bash
+# Interactive — discover, select, run, scorecard
+trace-diff features https://api.example.com
+
+# Verify optional LLM setup (Groq/Ollama)
+trace-diff features --check-llm
+
+# Headless CI — JSON report, non-zero exit on failures
+trace-diff features https://api.example.com -y --json
+
+# With credentials (multi-realm: user / annotator / admin)
+trace-diff features https://api.example.com --auth-file auth.json
+
+# Stricter CI gates
+trace-diff features https://api.example.com -y \
+  --fail-on-reachable \
+  --fail-if-ttfb-exceeds 250ms
+```
+
+**How discovery works**
+
+1. Fetch OpenAPI from the target (if published)
+2. Build heuristic workflow scenarios (instant — **no LLM or API key required**)
+3. Optionally refine with LLM when Groq or Ollama is configured (~20s max)
+4. Cache manifest to `.trace-diff/workflows-<host>.json`
+5. TUI shows FLOW / WRITE / TLS rows; press `d` to inspect steps
+
+Yellow **Reachable** means the route exists but needs auth or body. Set `TRACE_DIFF_EMAIL` / `TRACE_DIFF_PASSWORD` (or `--auth-file`) to turn flows green.
+
+Docs: [FEATURES_AUTODETECT.md](FEATURES_AUTODETECT.md) · [FEATURES.md](FEATURES.md)
+
 ## Optional LLM (smarter API workflows)
 
-`trace-diff features` includes heuristic OpenAPI workflow discovery — no LLM required. For optional LLM refine, set `GROQ_API_KEY` (recommended) or run Ollama locally. Verify with `trace-diff features --check-llm`. See [LLM_SETUP.md](LLM_SETUP.md).
+Heuristic workflows work without any setup. For optional LLM refine (better grouping/ordering):
+
+```bash
+export GROQ_API_KEY="gsk_..."   # free at https://console.groq.com
+trace-diff features --check-llm
+trace-diff features https://api.example.com
+```
+
+Or run [Ollama](https://ollama.com) locally. Default provider is `auto` (Groq key → Ollama → heuristics only).
+
+See [LLM_SETUP.md](LLM_SETUP.md).
 
 ## Build a wheel locally (maintainers)
 
@@ -87,9 +151,10 @@ pip install dist/*.whl   # or dist\*.whl on Windows
 
 ## Publish (maintainers)
 
-1. Bump `version` in `Cargo.toml`
-2. Tag: `git tag v0.1.0 && git push origin v0.1.0`
-3. GitHub Actions workflow `.github/workflows/pypi.yml` builds wheels and uploads to PyPI
+1. Bump `version` in [Cargo.toml](Cargo.toml) and add entry to [CHANGELOG.md](../CHANGELOG.md)
+2. Tag: `git tag vX.Y.Z && git push origin vX.Y.Z`
+3. GitHub Actions workflow [.github/workflows/pypi.yml](../.github/workflows/pypi.yml) runs tests, builds wheels, smoke-tests all platforms, uploads to PyPI
+4. Create a GitHub Release with the changelog excerpt for that version
 
 Configure the `pypi` GitHub environment and [PyPI trusted publisher](https://docs.pypi.org/trusted-publishers/) for the repository.
 

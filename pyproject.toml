@@ -5,22 +5,36 @@ build-backend = "maturin"
 [project]
 name = "trace-route-test"
 dynamic = ["version"]
-description = "L3/L4 traceroute + L7 HTTP diagnostics CLI — trace routes and test API endpoints"
+description = "Network traceroute + L7 HTTP diagnostics, and OpenAPI API workflow discovery — trace routes, diff baselines, and test multi-step API flows"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.9"
 authors = [{ name = "Suryadeep Singh", email = "imsuryadeepsingh0911@gmail.com" }]
-keywords = ["network", "traceroute", "http", "diagnostics", "latency", "cli", "trace", "test"]
+keywords = ["network", "traceroute", "http", "diagnostics", "latency", "cli", "openapi", "api-testing", "workflow"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Environment :: Console",
   "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
   "Programming Language :: Rust",
   "Topic :: System :: Networking",
   "Topic :: System :: Monitoring",
-  "Operating System :: OS Independent",
+  "Topic :: Software Development :: Testing",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
 ]
+
+[project.urls]
+Homepage = "https://github.com/SuDy0906/trace-diff"
+Documentation = "https://github.com/SuDy0906/trace-diff#readme"
+Repository = "https://github.com/SuDy0906/trace-diff"
+Issues = "https://github.com/SuDy0906/trace-diff/issues"
+Changelog = "https://github.com/SuDy0906/trace-diff/blob/main/CHANGELOG.md"
 
 [tool.maturin]
 manifest-path = "Cargo.toml"

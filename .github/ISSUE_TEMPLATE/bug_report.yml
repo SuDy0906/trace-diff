@@ -1,0 +1,62 @@
+name: Bug report
+description: Report incorrect behavior, crashes, or failed probes
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Include `trace-diff --version` output and the exact command you ran.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: What did you expect vs what actually happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        pip install trace-route-test
+        trace-diff features https://api.example.com
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: trace-diff --version
+      placeholder: trace-diff 0.1.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: install
+    attributes:
+      label: Install method
+      placeholder: pip install trace-route-test / cargo build
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / stderr (optional)
+      description: Run with `-v` or `RUST_LOG=trace_diff=debug` if helpful. Do not paste secrets or API keys.
+      render: shell
