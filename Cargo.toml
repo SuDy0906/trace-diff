@@ -32,7 +32,8 @@ windows-sys = { version = "0.59", features = [
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json"] }
 hyper = { version = "1.4", features = ["full"] }
 hyper-util = { version = "0.1", features = ["tokio", "client-legacy", "http1", "http2"] }
-hickory-resolver = "0.24"
+h2 = "0.4.16"
+hickory-resolver = "0.26"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 tokio-rustls = "0.26"
 webpki-roots = "0.26"

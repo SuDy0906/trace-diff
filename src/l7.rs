@@ -7,8 +7,7 @@ use crate::error::{Error, Result};
 use crate::progress::ProgressEvent;
 use crate::traceroute::ProgressTx;
 use chrono::{DateTime, Utc};
-use hickory_resolver::config::{ResolverConfig, ResolverOpts};
-use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::TokioResolver;
 use rustls::pki_types::ServerName;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
@@ -242,7 +241,16 @@ async fn resolve_dns(host: &str, port: u16) -> Result<SocketAddr> {
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
         return Ok(SocketAddr::new(ip, port));
     }
-    let resolver = TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
+    let resolver = TokioResolver::builder_tokio()
+        .map_err(|e| Error::Dns {
+            host: host.to_string(),
+            source: Box::new(e),
+        })?
+        .build()
+        .map_err(|e| Error::Dns {
+            host: host.to_string(),
+            source: Box::new(e),
+        })?;
     let response = resolver.lookup_ip(host).await.map_err(|e| Error::Dns {
         host: host.to_string(),
         source: Box::new(e),

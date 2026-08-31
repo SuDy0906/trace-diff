@@ -226,7 +226,10 @@ pub fn llm_check_report(resolution: &AiResolution) -> LlmCheckReport {
         requested_provider: resolution.requested.label().to_string(),
         resolved_provider: resolution.resolved_label().to_string(),
         ready,
-        model: resolution.config.as_ref().map(|c| c.resolve_model().to_string()),
+        model: resolution
+            .config
+            .as_ref()
+            .map(|c| c.resolve_model().to_string()),
         groq_key_set: resolution.groq_key_set,
         ollama_reachable: resolution.ollama_reachable,
         ollama_host: resolution.ollama_host.clone(),
@@ -502,8 +505,7 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/api/tags"))
             .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_string(r#"{"models":[{"name":"llama3.2"}]}"#),
+                ResponseTemplate::new(200).set_body_string(r#"{"models":[{"name":"llama3.2"}]}"#),
             )
             .mount(&server)
             .await;

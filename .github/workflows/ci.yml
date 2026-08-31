@@ -30,7 +30,7 @@ jobs:
         run: |
           cargo run --quiet -- run https://example.com --skip-trace --headless --save-baseline ci-smoke --db ./ci.db
           cargo run --quiet -- list --db ./ci.db
-          cargo run --quiet -- diff ci-smoke https://example.com --skip-trace --headless --db ./ci.db
+          cargo run --quiet -- diff ci-smoke --skip-trace --headless --db ./ci.db
 
   lint:
     name: fmt + clippy

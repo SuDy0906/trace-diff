@@ -4,12 +4,11 @@ use super::auth_spec::{build_realm_auth_specs, realm_spec_satisfied, RealmAuthSp
 use super::workflow::{detect_auth_realms, workflow_realm};
 use super::{
     build_categorized_report, discover_features, has_step_warnings, is_write_flow, AuthRealmHint,
-    DetectedFeature, DiscoverOptions, DiscoverStage, FeatureKind,
-    FeatureResult, FeatureRunReport, FlowKind, IssueCategory, LlmDiscoveryStatus, ProbeSettings,
-    ProbeVerdict, WorkflowScenario,
+    DetectedFeature, DiscoverOptions, DiscoverStage, FeatureKind, FeatureResult, FeatureRunReport,
+    FlowKind, IssueCategory, LlmDiscoveryStatus, ProbeSettings, ProbeVerdict, WorkflowScenario,
 };
-use crate::ai::{AiConfig, AiResolution};
 use crate::ai::llm_unavailable_hint;
+use crate::ai::{AiConfig, AiResolution};
 use crate::error::{Error, Result};
 use crate::theme::Theme;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -201,7 +200,10 @@ pub async fn run_features_interactive(
                     continue;
                 }
                 if !matches!(app.overlay, FeaturesOverlay::None) {
-                    if matches!(key.code, KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('l')) {
+                    if matches!(
+                        key.code,
+                        KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('l')
+                    ) {
                         app.overlay = FeaturesOverlay::None;
                         draw(&mut terminal, &mut app)?;
                     }
@@ -1922,7 +1924,10 @@ fn env_var_names_for_field(key: &str, realm: AuthRealmHint) -> Vec<&'static str>
         },
         "password" => match realm {
             AuthRealmHint::Annotator => {
-                vec!["TRACE_DIFF_ANNOTATOR_PASSWORD", "CONFUCIUS_ANNOTATOR_PASSWORD"]
+                vec![
+                    "TRACE_DIFF_ANNOTATOR_PASSWORD",
+                    "CONFUCIUS_ANNOTATOR_PASSWORD",
+                ]
             }
             _ => vec!["TRACE_DIFF_PASSWORD", "CONFUCIUS_PASSWORD"],
         },
@@ -2429,10 +2434,7 @@ fn llm_mode_label(llm: &LlmDiscoveryStatus) -> &'static str {
 fn draw_llm_overlay(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     let popup = centered_rect(76, 62, area);
     frame.render_widget(Clear, popup);
-    let mut lines = vec![
-        Line::from(" LLM discovery status "),
-        Line::from(""),
-    ];
+    let mut lines = vec![Line::from(" LLM discovery status "), Line::from("")];
     if let Some(llm) = &app.llm_status {
         lines.push(Line::from(format!("  Mode: {}", llm_mode_label(llm))));
         if let Some(suffix) = llm.status_suffix() {
