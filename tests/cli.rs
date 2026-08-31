@@ -57,13 +57,7 @@ fn run_http_headless_saves_baseline() {
 
         Command::cargo_bin("trace-diff")
             .unwrap()
-            .args([
-                "diff",
-                "ci-baseline",
-                "--skip-trace",
-                "--headless",
-                "--db",
-            ])
+            .args(["diff", "ci-baseline", "--skip-trace", "--headless", "--db"])
             .arg(&db)
             .assert()
             .success()
