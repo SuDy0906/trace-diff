@@ -71,6 +71,7 @@ Normal — heuristics work without LLM. To enable refine:
 ```bash
 export GROQ_API_KEY="gsk_..."   # https://console.groq.com
 trace-diff features --check-llm
+trace-diff features --check-llm --json   # parse "ready": true in CI
 ```
 
 Or install [Ollama](https://ollama.com) and `ollama pull qwen2.5:7b-instruct`.
