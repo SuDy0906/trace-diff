@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-08-31
+
 ### Added
 
 - Production packaging: LICENSE, CHANGELOG, PyPI metadata URLs, GitHub issue templates
@@ -21,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - PyPI classifiers: platform-specific wheels (removed misleading OS Independent)
+- Upgraded `hickory-resolver` 0.26 and `h2` 0.4.19 (security advisories)
+
+### Fixed
+
+- CI: wiremock-based tests (no live network); rustfmt; flaky macOS diff smoke
 
 ## [0.1.0] - 2026-08-30
 
@@ -32,5 +39,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optional LLM refine (Groq/Ollama) with `--check-llm` and `auto` provider resolution
 - Wheels: Windows x86_64, macOS arm64/x86_64, Linux x86_64 (manylinux 2_28)
 
-[Unreleased]: https://github.com/SuDy0906/trace-diff/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/SuDy0906/trace-diff/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/SuDy0906/trace-diff/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/SuDy0906/trace-diff/releases/tag/v0.1.0

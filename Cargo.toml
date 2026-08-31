@@ -1,6 +1,6 @@
 [package]
 name = "trace-diff"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Interactive terminal-native diagnostic CLI: L3/L4 traceroute + L7 HTTP lifecycle diffs and OpenAPI workflow testing"
 license = "MIT"

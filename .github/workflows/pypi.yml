@@ -92,11 +92,12 @@ jobs:
         shell: bash
         run: pip install dist/*.whl
       - name: Smoke test
+        shell: bash
         run: |
           trace-diff --version
-          trace-diff --help
-          trace-diff run https://example.com --skip-trace --headless
+          trace-diff --help | grep -q features
           trace-diff features --check-llm
+          trace-diff features --check-llm --json | grep -q '"ready"'
 
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
