@@ -17,23 +17,32 @@ Upgrade or reinstall:
 pip install --upgrade trace-route-test
 ```
 
-### Quick smoke test (no admin)
+### First run (interactive TUI)
 
-Works on all platforms — HTTP only, skips L3/L4 traceroute:
+Open a terminal and run **without** `--headless`:
 
 ```bash
-trace-diff run https://example.com --skip-trace --headless
+# Why is this site slow? (full path + HTTP timing)
+trace-diff run https://example.com
+
+# HTTP timing only — no Administrator on Windows
+trace-diff run https://example.com --skip-trace
 ```
 
 ### Features TUI (OpenAPI workflows)
+
+Use your **API host** (not the marketing website):
 
 ```bash
 trace-diff features https://api.example.com
 ```
 
-Headless / CI (or when stdout is not a TTY):
+### Scripts & CI (headless)
+
+When you need JSON or pipelines — not for first-time use:
 
 ```bash
+trace-diff run https://example.com --skip-trace --headless
 trace-diff features https://api.example.com -y --json
 trace-diff features https://api.example.com -y --no-llm --fail-on-reachable
 ```

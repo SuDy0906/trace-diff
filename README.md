@@ -1,168 +1,162 @@
 # trace-diff
 
-Interactive, terminal-native diagnostic CLI with two main modes:
+**See why a site or API is slow — in your terminal.**
 
-1. **Network probe** — Layer 3/4 hop-by-hop traceroute + Layer 7 HTTP connection lifecycle breakdown, with SQLite baselines for regression detection.
-2. **Features** — Auto-discover API workflow scenarios from OpenAPI, run multi-step auth flows interactively or in CI, and score each endpoint (health, latency, TLS).
-
-Both ship in the same `pip install trace-route-test` binary. No Rust toolchain required for pip users.
-
-## Quick start
-
-### pip (recommended)
-
-Requires Python 3.9+.
+Install once with pip, run two commands, get a live dashboard: hop-by-hop network path, HTTP timing (DNS → TLS → first byte), and optional API workflow smoke tests from OpenAPI.
 
 ```bash
 pip install trace-route-test
-trace-diff --help
+```
 
-# Network probe (HTTP only, no admin)
-trace-diff run https://example.com --skip-trace --headless
+Package on PyPI: **`trace-route-test`** · CLI: **`trace-diff`** · Python 3.9+
 
-# API workflow discovery + interactive TUI
+---
+
+## Everyday use (interactive)
+
+Open a terminal and run a command **without extra flags**. You get the **TUI** — live progress, colored bars, keyboard shortcuts. No JSON, no scripts.
+
+### “Why is this site slow?”
+
+```bash
+trace-diff run https://example.com
+```
+
+Shows where time goes: DNS, TCP connect, TLS, time-to-first-byte (TTFB), download — plus the network path hop-by-hop.
+
+**Tip:** On Windows, run PowerShell **as Administrator** for full traceroute. For HTTP timing only (no admin):
+
+```bash
+trace-diff run https://example.com --skip-trace
+```
+
+### “Does my API work?”
+
+Point at your **API host** (the one that serves OpenAPI), not the marketing website:
+
+```bash
 trace-diff features https://api.example.com
 ```
 
-Package on PyPI: **`trace-route-test`** → CLI: **`trace-diff`**.  
-Install guide: [docs/INSTALL.md](docs/INSTALL.md) · [PyPI details](docs/PYPI.md)
+1. Discovers workflow scenarios (health checks, login flows, tagged endpoints)
+2. Lets you pick what to run (Space to toggle, Enter to run)
+3. Scores each step: green pass, yellow needs auth, red failed
 
-### Network probe (`run` / `diff`)
+**Tip:** If you only see basic pages (`/health`, sitemap links), switch to `https://api.yoursite.com` — that’s where OpenAPI lives.
 
-Trace routes and measure HTTP timing (DNS → TCP → TLS → TTFB). Save baselines and diff later runs to catch regressions.
+### Optional: smarter API grouping (LLM)
+
+Heuristics work with **no API key**. For nicer workflow grouping, set `GROQ_API_KEY` or run Ollama locally — see [docs/LLM_SETUP.md](docs/LLM_SETUP.md).
+
+Press **`l`** in the features TUI to check LLM status.
+
+### Keyboard shortcuts
+
+**`run` results**
+
+| Key | Action |
+|-----|--------|
+| `?` | Help |
+| `b` | Compare to a saved baseline |
+| `e` | Export JSON report |
+| `t` | Change theme |
+| `q` / Esc | Quit |
+
+**`features` select screen**
+
+| Key | Action |
+|-----|--------|
+| ↑↓ / j k | Move |
+| Space | Toggle scenario |
+| Enter / r | Run selected |
+| c | Auth credentials |
+| d / i | Inspect steps |
+| l | LLM status |
+| R | Rediscover |
+| `?` / g | Help / quick guide |
+| q / Esc | Quit |
+
+During a probe run, press **`q` twice** to confirm abort.
+
+`--no-color` or `NO_COLOR` disables colors; `--theme ocean|amber|mono` picks a palette.
+
+---
+
+## For developers & CI (scripts and automation)
+
+Use these when you want **JSON output**, **pipelines**, or **no TUI** — not for your first try.
+
+### Headless network probe
 
 ```bash
-trace-diff run https://example.com --skip-trace --headless
+trace-diff run https://api.example.com --skip-trace --headless
 trace-diff run https://api.example.com --headless --save-baseline staging
 trace-diff diff staging https://api.example.com --output json
 trace-diff run https://api.example.com --headless --fail-if-ttfb-exceeds 250ms
 ```
 
-Works without elevated privileges when using `--skip-trace` (L7 HTTP only). ICMP traceroute may need Admin/sudo — see [Permissions](#permissions).
-
-### Features (`features`)
-
-Point at an API host with a published OpenAPI spec. `trace-diff` discovers **workflow scenarios** (health smoke, auth chains, tag-grouped GET flows, optional write smokes), lets you select them in a TUI, and runs each step with pass/reach/fail scoring.
+### Headless API workflows
 
 ```bash
-trace-diff features https://api.example.com
-trace-diff features --check-llm                    # verify optional LLM provider
-trace-diff features --check-llm --json             # same, machine-readable (CI/setup scripts)
-trace-diff features https://api.example.com -y --json   # headless CI run
+trace-diff features https://api.example.com -y --json
+trace-diff features --check-llm --json
+trace-diff features https://api.example.com -y --no-llm --fail-on-reachable
 ```
 
-**Discovery pipeline:** fetch OpenAPI → heuristic workflow grouping (instant, no API key) → optional LLM refine (Groq or Ollama) → TLS cert canary → interactive scorecard.
+`-y` skips the TUI. Piped/non-TTY stdout auto-runs headless (same as `-y`).
 
-**Auth:** multi-realm support (user / annotator / admin) via env vars, `--auth-file`, or the in-TUI auth popup. Yellow **Reachable** rows mean the route exists but needs credentials.
+Auth in CI: env vars (`TRACE_DIFF_EMAIL`, `TRACE_DIFF_PASSWORD`, …) or `--auth-file auth.json`. See [docs/FEATURES_AUTODETECT.md](docs/FEATURES_AUTODETECT.md).
 
-**Optional LLM:** heuristics work out of the box. For smarter grouping, set `GROQ_API_KEY` ([console.groq.com](https://console.groq.com)) or run Ollama locally. See [docs/LLM_SETUP.md](docs/LLM_SETUP.md).
-
-Full guide: [docs/FEATURES_AUTODETECT.md](docs/FEATURES_AUTODETECT.md)
-
-### From source (developers)
+### Build from source (Rust)
 
 ```bash
 cargo build --release
-
-# Full probe (TUI) — live progress, then results
 cargo run -- run https://example.com
-
-# Headless / CI JSON
-cargo run -- run https://example.com --headless --save-baseline staging
-
-# Diff against baseline
-cargo run -- diff staging https://example.com --output json
-
-# Fail CI if TTFB exceeds a hard limit
-cargo run -- run https://api.example.com --headless --fail-if-ttfb-exceeds 250ms
-
-# Verbose / debug traces on stderr
-cargo run -- -v run https://example.com --skip-trace --output text
+cargo run -- features https://api.example.com
 ```
 
-### TUI keys (`run`)
+---
 
-| Key | Action |
-|---|---|
-| `?` | Help |
-| `b` | Select baseline to diff |
-| `e` | Export JSON report |
-| `t` | Cycle theme |
-| `q` / Esc | Quit |
+## What each mode does
 
-### TUI keys (`features`)
+| Mode | Command | Best for |
+|------|---------|----------|
+| **Network probe** | `trace-diff run <url>` | Slow site/API — split network vs server time |
+| **API features** | `trace-diff features <api-url>` | OpenAPI smoke tests, auth flows, TLS check |
+| **Baseline diff** | `trace-diff diff <name> <url>` | “Did latency or route change since last week?” |
 
-**Select screen**
+Both modes ship in the same pip package. No Rust toolchain required for pip users.
 
-| Key | Action |
-|---|---|
-| ↑↓ / j k | Move cursor |
-| Space | Toggle feature |
-| a / n | Select all / none |
-| Enter / r | Run selected |
-| c | Auth credentials popup |
-| d / i | Inspect workflow steps |
-| l | LLM status panel |
-| R | Rediscover (retry OpenAPI pipeline) |
-| ? | Help overlay |
-| g | Quick guide |
-| t | Cycle theme |
-| q / Esc | Quit |
-
-**During discovery:** live stage updates (Fetching OpenAPI…, Building heuristics…); `q` cancels.
-
-**During probe run:** press `q` twice to confirm abort.
-
-**Results screen:** `R` categorized report · `e` export JSON · `b` back to select.
-
-**Auth popup:** shows which env vars are set (names only); Esc twice to skip without saving.
-
-Non-interactive stdout (pipes/CI) auto-runs headless — same as `-y`.
-
-`--no-color` / `NO_COLOR` disables colors; `--theme ocean|amber|mono` selects a palette.
+---
 
 ## Docs
 
-- [**Feature auto-detect**](docs/FEATURES_AUTODETECT.md) — discover pages/APIs, prompt, scorecard
-- [**LLM setup (optional)**](docs/LLM_SETUP.md) — Groq or Ollama for smarter workflows
-- [**Feature reference**](docs/FEATURES.md) — full catalog of commands, probes, TUI, baselines, CI
-- [Problem & technical proposal](docs/PROBLEM_AND_TECHNICAL_PROPOSAL.md)
 - [Install (Windows / macOS / Linux)](docs/INSTALL.md)
-- [CI integration](docs/CI.md) — GitHub Actions, exit codes, JSON reports
+- [Feature auto-detect](docs/FEATURES_AUTODETECT.md) — discovery, auth, scorecard
+- [PyPI / pip details](docs/PYPI.md)
+- [CI integration](docs/CI.md) — GitHub Actions, exit codes
+- [LLM setup (optional)](docs/LLM_SETUP.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
-- [Changelog](CHANGELOG.md)
 - [How to read a diff](docs/HOW_TO_READ_A_DIFF.md)
-- [Security model](docs/SECURITY.md)
-- [Timing / clock disclaimer](docs/TIMING.md)
-- Linux netns testbed: `scripts/netns_netem_testbed.sh`
+- [Changelog](CHANGELOG.md)
+
+---
 
 ## Permissions
 
-After `pip install trace-route-test`, use the `trace-diff` command (see [INSTALL.md](docs/INSTALL.md)).
+| Platform | Full traceroute | HTTP only (`--skip-trace`) |
+|----------|-----------------|----------------------------|
+| Windows | Run terminal as **Administrator** | Normal user |
+| macOS | Often needs `sudo` | Normal user |
+| Linux | `sudo setcap cap_net_raw+ep $(which trace-diff)` | Normal user |
 
-| Platform | Notes |
-|---|---|
-| Linux | `sudo setcap cap_net_raw+ep $(which trace-diff)` for traceroute without root |
-| macOS | May require `sudo trace-diff ...` for raw ICMP |
-| Windows | Run terminal **as Administrator** for ICMP traceroute |
+`features` uses HTTP only — no admin needed.
 
-L7 HTTP probing works without elevated privileges (`--skip-trace`).
+---
 
-## Commands
+## All commands
 
-**Network probe**
+**Network:** `run`, `diff`, `baseline`, `list`  
+**API:** `features`, `features --check-llm`, `features --auth-file …`, `features --no-llm`
 
-- `run <target>` — L3/L4 traceroute + L7 HTTP probe
-- `baseline tag|delete|show` — manage named baselines
-- `diff <baseline> [target]` — compare against baseline
-- `list` — list runs and baselines
-
-**API features**
-
-- `features <url>` — discover OpenAPI workflows, interactive TUI select + run
-- `features <url> -y` — headless auto-run (CI)
-- `features <url> -y --json` — JSON report to stdout
-- `features --check-llm` — print LLM provider status (Groq/Ollama)
-- `features --check-llm --json` — JSON status for setup scripts / CI
-- `features <url> --auth-file auth.json` — multi-realm credentials
-- `features <url> --no-llm` — skip workflow pipeline (flat endpoint list)
+Full reference: [docs/FEATURES.md](docs/FEATURES.md)
